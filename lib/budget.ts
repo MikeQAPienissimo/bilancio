@@ -5,10 +5,14 @@ export type AccountType = 'conto' | 'carta' | 'fido' | 'contanti' | 'piva'
 export type Income = {
   id: string; date: string; description: string; amount: number
   kind: Kind; accountId?: string; recurring?: boolean; freq?: Freq
+  incomeClass?: 'cash' | 'benefit'
+  benefitId?: string
+  benefitTransactionId?: string
 }
 export type Expense = Income & {
   category: string
   freq: Freq
+  benefitAmount?: number
   subscription?: {
     startDate?: string
     endDate?: string | null
@@ -105,7 +109,13 @@ export type BenefitTransaction = {
   type: 'topup' | 'spend'
   amount: number
   note?: string
+  description?: string
+  category?: string
+  source?: 'employer' | 'personal' | 'adjustment'
+  incomeId?: string
+  expenseId?: string
 }
+export type BenefitAccreditMode = 'none' | 'fixed' | 'variable' | 'meal_count'
 export type BenefitWallet = {
   id: string
   name: string
@@ -115,6 +125,11 @@ export type BenefitWallet = {
   balance: number
   expiryDate?: string
   notes?: string
+  accreditMode: BenefitAccreditMode
+  monthlyAmount?: number
+  mealValue?: number
+  expectedMealCount?: number
+  creditDay?: number
   transactions: BenefitTransaction[]
 }
 export type DashboardPreferences = {
@@ -309,7 +324,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 8,
+    version: 9,
     profile: {
       name: '',
       ateco: '',
@@ -341,7 +356,7 @@ export const uid = () => crypto.randomUUID()
 export function migrate(v: Partial<BudgetState>): BudgetState {
   const empty = createEmptyState()
   return {
-    ...empty, ...v, version: 8,
+    ...empty, ...v, version: 9,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -368,7 +383,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
       return { ...migrated, endDate: financingInstallmentSchedule(migrated).at(-1)?.date ?? migrated.endDate }
     }),
     goals: v.goals ?? [],
-    benefits: (v.benefits ?? []).map(benefit => ({ ...benefit, transactions: benefit.transactions ?? [] })),
+    benefits: (v.benefits ?? []).map(benefit => ({ ...benefit, accreditMode: benefit.accreditMode ?? 'none', transactions: benefit.transactions ?? [] })),
     dashboard: { ...empty.dashboard, ...v.dashboard },
     simulations: (v.simulations ?? []).map(simulation => {
       const installmentCount = simulation.installmentCount ?? Math.max(0, simulation.durationMonths ?? 0)
@@ -391,22 +406,25 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
 export function totals(s: BudgetState, y: number) {
   const today = isoDate(new Date())
   const incomes = s.incomes.filter(i => new Date(i.date).getFullYear() === y)
+  const cashIncomes = incomes.filter(i => i.incomeClass !== 'benefit')
   const expenses = s.expenses.filter(i => new Date(i.date).getFullYear() === y)
   const sum = (a: { amount: number }[]) => a.reduce((n, x) => n + x.amount, 0)
-  const pivaIncome = sum(incomes.filter(i => i.kind === 'piva'))
+  const pivaIncome = sum(cashIncomes.filter(i => i.kind === 'piva'))
   const taxable = pivaIncome * s.profile.profitability / 100
   const contributions = taxable * s.profile.contributions / 100
   const tax = Math.max(0, taxable - contributions) * s.profile.substituteTax / 100
   const reserve = pivaIncome * s.profile.taxReserve / 100
-  const totalIncome = sum(incomes)
-  const personalIncome = sum(incomes.filter(i => i.kind === 'personale'))
+  const totalIncome = sum(cashIncomes)
+  const benefitIncome = sum(incomes.filter(i => i.incomeClass === 'benefit'))
+  const personalIncome = sum(cashIncomes.filter(i => i.kind === 'personale'))
   const totalExpense = sum(expenses)
+  const cashExpense = expenses.reduce((n, expense) => n + Math.max(0, expense.amount - (expense.benefitAmount ?? 0)), 0)
   const liquidity = s.accounts.reduce((n, a) => n + a.balance, 0)
   const assets = s.assets.reduce((n, a) => n + a.value, 0)
   const financingDebt = s.financings.reduce((n, financing) => n + Math.max(0, financing.residualAmount), 0)
   const monthlyFinancing = s.financings.filter(financing => financing.residualAmount > 0).reduce((n, financing) => n + toMensile(financing.paymentAmount, financing.freq), 0)
   const mensileSpese = s.expenses.filter(e => (e.recurring || e.subscription) && (!e.subscription || isActiveAt(e.subscription.startDate, e.subscription.endDate, today)) && !['finanziario','assicurativo','risparmio'].includes(e.category))
-    .reduce((n, e) => n + toMensile(e.amount, e.freq), 0)
+    .reduce((n, e) => n + toMensile(Math.max(0, e.amount - (e.benefitAmount ?? 0)), e.freq), 0)
   const totalMonthlyExpenses = mensileSpese + monthlyFinancing
   // Limite attivo: il più restrittivo tra fisso e percentuale
   const limFisso = s.limiteSpesa.fisso > 0 ? s.limiteSpesa.fisso : Infinity
@@ -415,7 +433,7 @@ export function totals(s: BudgetState, y: number) {
   const usatoLimite = (limiteAttivo < Infinity && limiteAttivo > 0) ? totalMonthlyExpenses / limiteAttivo : 0
   return {
     incomes, expenses, pivaIncome, personalIncome, taxable, contributions, tax, reserve,
-    totalIncome, totalExpense, liquidity, assets, financingDebt, monthlyFinancing,
+    totalIncome, benefitIncome, totalExpense, cashExpense, liquidity, assets, financingDebt, monthlyFinancing,
     netWorth: liquidity + assets - financingDebt,
     mensileSpese: totalMonthlyExpenses,
     limiteAttivo: isFinite(limiteAttivo) ? limiteAttivo : Infinity,
@@ -426,7 +444,7 @@ export function totals(s: BudgetState, y: number) {
 export function monthlyData(s: BudgetState, y: number) {
   return ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'].map((month, index) => ({
     month,
-    entrate: s.incomes.filter(i => new Date(i.date).getFullYear()===y && new Date(i.date).getMonth()===index).reduce((n,x)=>n+x.amount,0),
+    entrate: s.incomes.filter(i => i.incomeClass !== 'benefit' && new Date(i.date).getFullYear()===y && new Date(i.date).getMonth()===index).reduce((n,x)=>n+x.amount,0),
     spese: s.expenses.filter(i => new Date(i.date).getFullYear()===y && new Date(i.date).getMonth()===index).reduce((n,x)=>n+x.amount,0)
   }))
 }
