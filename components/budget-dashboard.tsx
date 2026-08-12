@@ -2,19 +2,20 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ArrowDownLeft, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
-import { Account, Asset, AssetMovimento, BudgetState, Deadline, Freq, FREQ_LABEL, FREQ_MULT, Income, Kind, createEmptyState, dateIt, migrate, money, monthlyData, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
+import { ArrowDownLeft, BadgeEuro, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
+import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, Kind, Simulation, SimulationType, createEmptyState, dateIt, isActiveAt, migrate, money, monthlyData, monthlyPayment, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-type View = 'dashboard'|'movimenti'|'conti'|'budget'|'patrimonio'|'piva'|'scadenze'|'previsioni'|'advisor'|'setup'
+type View = 'dashboard'|'movimenti'|'conti'|'budget'|'patrimonio'|'finanziamenti'|'piva'|'scadenze'|'previsioni'|'advisor'|'setup'
 const nav = [
   ['dashboard','Dashboard',LayoutDashboard],
   ['movimenti','Movimenti',ArrowDownLeft],
   ['conti','Conti e carte',WalletCards],
   ['budget','Budget',CircleDollarSign],
   ['patrimonio','Patrimonio',Landmark],
+  ['finanziamenti','Finanziamenti',BadgeEuro],
   ['piva','P.IVA',BriefcaseBusiness],
   ['scadenze','Scadenze',CalendarDays],
   ['previsioni','Previsioni',CalendarDays],
@@ -24,6 +25,8 @@ const nav = [
 
 const TIPO_EMOJI: Record<string,string> = {conto:'🏦',carta:'💳',fido:'📋',contanti:'💵',piva:'🧾'}
 const TIPO_LABEL: Record<string,string> = {conto:'Corrente',carta:'Carta credito',fido:'Fido',contanti:'Contanti',piva:'P.IVA'}
+const FINANCING_LABEL: Record<FinancingCategory,string> = {mutuo:'Mutuo',auto:'Auto',prestito:'Prestito',leasing:'Leasing',altro:'Altro'}
+const SIMULATION_LABEL: Record<SimulationType,string> = {mutuo:'Nuovo mutuo',finanziamento:'Nuovo finanziamento',spesa:'Nuova spesa',entrata:'Nuova entrata'}
 const IS_PATRIMONIO = (cat: string) => ['finanziario','assicurativo','risparmio'].includes(cat)
 
 // ── AUTH SCREEN ──
@@ -170,12 +173,16 @@ export function BudgetDashboard() {
 DATI FINANZIARI (${year}):
 - Liquidità: ${money.format(t.liquidity)}
 - Patrimonio netto: ${money.format(t.netWorth)}
+- Debiti residui finanziamenti/mutui: ${money.format(t.financingDebt)}
 - Conti: ${state.accounts.map(a=>`${a.name} (${TIPO_LABEL[a.type]}): ${money.format(a.balance)}`).join(', ')}
-- Entrate: ${money.format(t.totalIncome)} | Spese: ${money.format(t.totalExpense)}
+- Entrate personali: ${money.format(t.personalIncome)} | Introiti P.IVA: ${money.format(t.pivaIncome)} | Spese: ${money.format(t.totalExpense)}
 - Spese mensili equiv.: ${money.format(t.mensileSpese)}
+- Rate mensili equiv.: ${money.format(t.monthlyFinancing)}
 - Limite mensile: ${t.limiteAttivo < Infinity ? money.format(t.limiteAttivo)+'/mese ('+Math.round(t.usatoLimite*100)+'% usato)' : 'nessuno'}
 - Investimenti: versato ${money.format(pat.totVersato)}, valore ${money.format(pat.totValore)}, rendimento ${money.format(pat.rend)}
 - P.IVA: fatturato ${money.format(t.pivaIncome)}, tasse stimate ${money.format(t.tax+t.contributions)}, accantonato ${money.format(t.reserve)}
+- Finanziamenti: ${state.financings.map(f=>`${f.name}, residuo ${money.format(f.residualAmount)}, rata ${money.format(toMensile(f.paymentAmount,f.freq))}/mese`).join('; ') || 'nessuno'}
+- Abbonamenti: ${state.expenses.filter(e=>e.subscription).map(e=>`${e.description} ${money.format(toMensile(e.amount,e.freq))}/mese`).join('; ') || 'nessuno'}
 - Spese principali: ${state.expenses.slice(0,6).map(e=>`${e.description} ${money.format(e.amount)} (${FREQ_LABEL[e.freq]})`).join(', ')}`
   }
 
@@ -261,9 +268,10 @@ DATI FINANZIARI (${year}):
           {view==='conti' && <Accounts s={state} set={setState}/>}
           {view==='budget' && <Budgets s={state} set={setState} year={year}/>}
           {view==='patrimonio' && <Assets s={state} set={setState}/>}
+          {view==='finanziamenti' && <Financings s={state} set={setState}/>}
           {view==='piva' && <Piva s={state} year={year}/>}
           {view==='scadenze' && <Deadlines s={state} set={setState}/>}
-          {view==='previsioni' && <Previsioni s={state}/>}
+          {view==='previsioni' && <Previsioni s={state} set={setState}/>}
           {view==='advisor' && (
             <div className="flex flex-col gap-6">
               <Heading kicker="ADVISOR AI" title="Il tuo consulente finanziario" text="Analisi sui tuoi dati reali. Fai domande libere."/>
@@ -337,7 +345,7 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
       <Heading kicker="PANORAMICA" title="Il quadro è sotto controllo." text="Liquidità, patrimonio e flussi in un unico posto."/>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Liquidità netta" value={t.liquidity}/>
-        <Metric label="Patrimonio totale" value={t.netWorth}/>
+        <Metric label="Patrimonio netto" value={t.netWorth} detail={t.financingDebt>0?`Debiti residui: ${money.format(t.financingDebt)}`:undefined}/>
         <Card>
           <p className="text-sm text-muted-foreground">Spese/mese equiv.</p>
           <p className={`mt-3 text-2xl font-semibold ${limPerc&&limPerc>90?'text-destructive':''}`}>{money.format(t.mensileSpese)}</p>
@@ -357,45 +365,62 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
 function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;year:number}) {
   const [mode,setMode] = useState<'entrata'|'spesa'>('spesa')
   const [freq,setFreq] = useState<Freq>('mensile')
+  const [isSubscription,setIsSubscription] = useState(false)
+  const [openEnded,setOpenEnded] = useState(false)
   const submit = (e:FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const f=new FormData(e.currentTarget)
-    const base={id:uid(),date:String(f.get('date')),description:String(f.get('description')),amount:Number(f.get('amount')),kind:String(f.get('kind')) as Kind,accountId:String(f.get('accountId')),recurring:Boolean(f.get('recurring')),freq}
+    const accountId=String(f.get('accountId') ?? '') || undefined
+    const base:Income={id:uid(),date:String(f.get('date')),description:String(f.get('description')),amount:Number(f.get('amount')),kind:String(f.get('kind')) as Kind,accountId,recurring:Boolean(f.get('recurring'))||isSubscription,freq}
     if(!base.description||base.amount<=0)return
-    set(x=>mode==='entrata'?{...x,incomes:[base,...x.incomes]}:{...x,expenses:[{...base,category:String(f.get('category'))},...x.expenses]})
-    e.currentTarget.reset();setFreq('mensile')
+    if(mode==='entrata') {
+      set(x=>({...x,incomes:[base,...x.incomes]}))
+    } else {
+      const expense:Expense={
+        ...base,
+        freq,
+        category:String(f.get('category')),
+        subscription:isSubscription?{
+          startDate:String(f.get('startDate') ?? '')||undefined,
+          endDate:openEnded?null:String(f.get('endDate'))
+        }:undefined
+      }
+      set(x=>({...x,expenses:[expense,...x.expenses]}))
+    }
+    e.currentTarget.reset();setFreq('mensile');setIsSubscription(false);setOpenEnded(false)
   }
-  const all=[...s.incomes.map(x=>({...x,type:'Entrata'})),...s.expenses.map(x=>({...x,type:'Spesa'}))].filter(x=>new Date(x.date).getFullYear()===year).sort((a,b)=>b.date.localeCompare(a.date))
+  const incomes=s.incomes.filter(x=>new Date(x.date).getFullYear()===year).sort((a,b)=>b.date.localeCompare(a.date))
+  const personalIncomes=incomes.filter(x=>x.kind==='personale')
+  const pivaIncomes=incomes.filter(x=>x.kind==='piva')
+  const expenses=s.expenses.filter(x=>new Date(x.date).getFullYear()===year).sort((a,b)=>b.date.localeCompare(a.date))
+  const subscriptions=expenses.filter(x=>x.subscription)
+  const otherExpenses=expenses.filter(x=>!x.subscription)
+  const sum=(items:{amount:number}[])=>items.reduce((total,item)=>total+item.amount,0)
+  const removeIncome=(id:string)=>set(x=>({...x,incomes:x.incomes.filter(item=>item.id!==id)}))
+  const removeExpense=(id:string)=>set(x=>({...x,expenses:x.expenses.filter(item=>item.id!==id)}))
+  const incomeList=(items:Income[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><b className="text-sm">{item.description}</b><p className="text-xs text-muted-foreground">{dateIt(item.date)}{item.recurring&&item.freq?` · ${FREQ_LABEL[item.freq]}`:''}</p></div><b className="text-sm text-green-600">+{money.format(item.amount)}</b><button onClick={()=>removeIncome(item.id)} aria-label="Elimina entrata"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
+  const expenseList=(items:Expense[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{item.description}</b>{item.subscription&&<span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">ABBONAMENTO</span>}{item.kind==='piva'&&<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">P.IVA</span>}</div><p className="text-xs text-muted-foreground">{item.category||'Senza categoria'} · {FREQ_LABEL[item.freq]}</p>{item.subscription&&<p className="mt-1 text-xs text-muted-foreground">Inizio: {item.subscription.startDate?dateIt(item.subscription.startDate):'non indicato'} · Fine: {item.subscription.endDate?dateIt(item.subscription.endDate):'senza scadenza'}</p>}</div><b className="text-sm text-destructive">-{money.format(item.amount)}</b><button onClick={()=>removeExpense(item.id)} aria-label="Elimina spesa"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
   return (
     <div className="flex flex-col gap-6">
-      <Heading kicker="REGISTRO" title="Tutti i movimenti" text={`Movimenti ${year} — usa le frecce in alto per cambiare anno.`}/>
+      <Heading kicker="REGISTRO" title="Entrate e spese" text={`Movimenti ${year}, già separati per natura e attività.`}/>
+      <div className="grid gap-4 sm:grid-cols-3"><Metric label="Entrate personali" value={sum(personalIncomes)}/><Metric label="Introiti P.IVA" value={sum(pivaIncomes)}/><Metric label="Spese" value={sum(expenses)}/></div>
       <form onSubmit={submit} className="grid gap-3 rounded-2xl border bg-card p-5 md:grid-cols-4">
         <Field label="Operazione"><select value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="spesa">Spesa</option><option value="entrata">Entrata</option></select></Field>
         <Field label="Data"><input name="date" type="date" required defaultValue={new Date().toISOString().slice(0,10)}/></Field>
         <Field label="Descrizione"><input name="description" required/></Field>
         <Field label="Importo (€)"><input name="amount" type="number" min=".01" step=".01" required/></Field>
         <Field label="Tipo"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
-        <Field label="Conto"><select name="accountId">{s.accounts.map(a=><option key={a.id} value={a.id}>{TIPO_EMOJI[a.type]} {a.name}</option>)}</select></Field>
+        <Field label="Conto (facoltativo)"><select name="accountId"><option value="">Nessun conto</option>{s.accounts.map(a=><option key={a.id} value={a.id}>{TIPO_EMOJI[a.type]} {a.name}</option>)}</select></Field>
         <Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field>
-        {mode==='spesa'&&<Field label="Categoria"><select name="category">{s.categories.map(c=><option key={c.id}>{c.name}</option>)}</select></Field>}
+        {mode==='spesa'&&<Field label="Categoria"><input name="category" list="expense-categories" required placeholder="Es. Casa, Auto..."/><datalist id="expense-categories">{s.categories.map(c=><option key={c.id} value={c.name}/>)}</datalist></Field>}
         <label className="flex items-center gap-2 text-sm col-span-full"><input name="recurring" type="checkbox"/>Ricorrente</label>
+        {mode==='spesa'&&<label className="flex items-center gap-2 text-sm col-span-full"><input type="checkbox" checked={isSubscription} onChange={e=>setIsSubscription(e.target.checked)}/>È un abbonamento</label>}
+        {mode==='spesa'&&isSubscription&&<><Field label="Data inizio (facoltativa)"><input name="startDate" type="date"/></Field><Field label="Data fine"><input name="endDate" type="date" disabled={openEnded} required={!openEnded}/></Field><label className="flex items-center gap-2 self-end pb-2 text-sm md:col-span-2"><input type="checkbox" checked={openEnded} onChange={e=>setOpenEnded(e.target.checked)}/>Data fine non definita</label></>}
         <button className="col-span-full h-11 rounded-xl bg-primary px-4 font-semibold text-primary-foreground"><Plus className="mr-2 inline size-4"/>Aggiungi</button>
       </form>
-      <Card className="overflow-x-auto p-0">
-        <div className="min-w-[600px]">
-          {all.map(x=>(
-            <div key={x.id} className="grid grid-cols-[90px_1fr_70px_70px_110px_36px] items-center gap-2 border-b px-4 py-3 last:border-0">
-              <span className="text-xs text-muted-foreground">{dateIt(x.date)}</span>
-              <div><b className="text-sm">{x.description}</b><p className="text-xs text-muted-foreground">{x.kind==='piva'?'P.IVA':'Personale'}{x.freq&&x.freq!=='unica'?` · ${FREQ_LABEL[x.freq as Freq]}`:''}</p></div>
-              <span className="text-xs">{x.type}</span>
-              <span className="text-xs text-muted-foreground">{x.freq?FREQ_LABEL[x.freq as Freq]:''}</span>
-              <b className="text-right text-sm">{money.format(x.amount)}</b>
-              <button onClick={()=>set(v=>x.type==='Entrata'?{...v,incomes:v.incomes.filter(i=>i.id!==x.id)}:{...v,expenses:v.expenses.filter(i=>i.id!==x.id)})}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button>
-            </div>
-          ))}
-          {!all.length&&<p className="p-8 text-center text-sm text-muted-foreground">Nessun movimento nel {year}</p>}
-        </div>
-      </Card>
+      <div className="grid gap-5 lg:grid-cols-2"><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Entrate personali</h3><p className="text-sm text-muted-foreground">Stipendio e altri introiti non P.IVA</p></div>{incomeList(personalIncomes,'Nessuna entrata personale')}</section><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Introiti P.IVA</h3><p className="text-sm text-muted-foreground">Fatture e compensi professionali</p></div>{incomeList(pivaIncomes,'Nessun introito P.IVA')}</section></div>
+      <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Abbonamenti</h3><p className="text-sm text-muted-foreground">Costi ricorrenti con periodo definito o senza scadenza</p></div>{expenseList(subscriptions,'Nessun abbonamento')}</section>
+      <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Altre spese</h3><p className="text-sm text-muted-foreground">Spese personali e professionali</p></div>{expenseList(otherExpenses,'Nessuna spesa')}</section>
     </div>
   )
 }
@@ -546,6 +571,69 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
   )
 }
 
+// ── FINANZIAMENTI ──
+function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+  const [showForm,setShowForm]=useState(false)
+  const [category,setCategory]=useState<FinancingCategory>('auto')
+  const [freq,setFreq]=useState<Freq>('mensile')
+  const [openEnded,setOpenEnded]=useState(false)
+  const residual=s.financings.reduce((total,item)=>total+Math.max(0,item.residualAmount),0)
+  const monthly=s.financings.reduce((total,item)=>total+toMensile(item.paymentAmount,item.freq),0)
+  const submit=(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault()
+    const f=new FormData(e.currentTarget)
+    const originalAmount=Number(f.get('originalAmount'))
+    const residualRaw=String(f.get('residualAmount')??'')
+    const financing:Financing={
+      id:uid(),
+      name:String(f.get('name')),
+      category,
+      kind:String(f.get('kind')) as Kind,
+      originalAmount,
+      residualAmount:residualRaw===''?originalAmount:Number(residualRaw),
+      paymentAmount:Number(f.get('paymentAmount')),
+      freq,
+      interestRate:Number(f.get('interestRate')||0),
+      startDate:String(f.get('startDate')??'')||undefined,
+      endDate:openEnded?null:String(f.get('endDate')),
+      accountId:String(f.get('accountId')??'')||undefined
+    }
+    if(!financing.name||financing.originalAmount<=0||financing.paymentAmount<=0)return
+    set(x=>({...x,financings:[financing,...x.financings]}))
+    e.currentTarget.reset();setCategory('auto');setFreq('mensile');setOpenEnded(false);setShowForm(false)
+  }
+  return <div className="flex flex-col gap-6">
+    <Heading kicker="DEBITI E RATE" title="Finanziamenti e mutui" text="Auto, casa, prestiti e leasing con residuo e impatto mensile."/>
+    <div className="grid gap-4 sm:grid-cols-3"><Metric label="Debito residuo" value={residual}/><Metric label="Rate equivalenti/mese" value={monthly}/><Card><p className="text-sm text-muted-foreground">Posizioni attive</p><p className="mt-3 text-2xl font-semibold">{s.financings.length}</p></Card></div>
+    <button onClick={()=>setShowForm(value=>!value)} className="self-start flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi finanziamento</button>
+    {showForm&&<form onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
+      <Field label="Nome"><input name="name" required placeholder="Es. Auto, mutuo casa..."/></Field>
+      <Field label="Categoria"><select value={category} onChange={e=>setCategory(e.target.value as FinancingCategory)}>{(Object.keys(FINANCING_LABEL) as FinancingCategory[]).map(key=><option key={key} value={key}>{FINANCING_LABEL[key]}</option>)}</select></Field>
+      <Field label="Ambito"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
+      <Field label="Importo iniziale (€)"><input name="originalAmount" type="number" min=".01" step=".01" required/></Field>
+      <Field label="Debito residuo (€)"><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = importo iniziale"/></Field>
+      <Field label="Rata (€)"><input name="paymentAmount" type="number" min=".01" step=".01" required/></Field>
+      <Field label="Frequenza rata"><FreqSelect value={freq} onChange={setFreq}/></Field>
+      <Field label="Tasso annuo %"><input name="interestRate" type="number" min="0" step=".01" defaultValue="0"/></Field>
+      <Field label="Conto di addebito"><select name="accountId"><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+      <Field label="Data inizio (facoltativa)"><input name="startDate" type="date"/></Field>
+      <Field label="Data fine"><input name="endDate" type="date" disabled={openEnded} required={!openEnded}/></Field>
+      <label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={openEnded} onChange={e=>setOpenEnded(e.target.checked)}/>Fine non definita</label>
+      <div className="col-span-full flex gap-3"><button className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">Salva</button><button type="button" onClick={()=>setShowForm(false)} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
+    </form>}
+    <div className="grid gap-4 md:grid-cols-2">{s.financings.map(item=>{
+      const paid=Math.max(0,item.originalAmount-item.residualAmount)
+      const progress=item.originalAmount>0?Math.min(100,paid/item.originalAmount*100):0
+      return <Card key={item.id}>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{FINANCING_LABEL[item.category]} · {item.kind==='piva'?'P.IVA':'Personale'}</p><h3 className="mt-1 font-semibold">{item.name}</h3></div><button onClick={()=>set(x=>({...x,financings:x.financings.filter(value=>value.id!==item.id)}))} aria-label="Elimina finanziamento"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>
+        <div className="mt-4 grid grid-cols-2 gap-3"><div><label className="text-xs text-muted-foreground" htmlFor={`residual-${item.id}`}>Residuo aggiornabile</label><input id={`residual-${item.id}`} className="mt-1 h-9 w-full rounded-xl border bg-background px-3 text-sm font-semibold" type="number" min="0" step=".01" value={item.residualAmount} onChange={e=>set(x=>({...x,financings:x.financings.map(value=>value.id===item.id?{...value,residualAmount:Number(e.target.value)}:value)}))}/></div><div><p className="text-xs text-muted-foreground">Rata</p><p className="mt-2 text-xl font-semibold">{money.format(item.paymentAmount)} <span className="text-xs font-normal text-muted-foreground">{FREQ_LABEL[item.freq].toLowerCase()}</span></p></div></div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div>
+        <p className="mt-2 text-xs text-muted-foreground">Rimborsato {progress.toFixed(0)}% · Tasso {item.interestRate}%{item.endDate?` · Fine ${dateIt(item.endDate)}`:' · Senza data finale'}</p>
+      </Card>
+    })}{!s.financings.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Nessun finanziamento inserito</p></Card>}</div>
+  </div>
+}
+
 // ── PIVA ──
 function Piva({s,year}:{s:BudgetState;year:number}) {
   const t=totals(s,year),due=t.tax+t.contributions
@@ -589,36 +677,75 @@ function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActio
 }
 
 // ── PREVISIONI ──
-function Previsioni({s}:{s:BudgetState}) {
-  const [data,setData]=useState('')
-  const addMesi=(n:number)=>{const d=new Date();d.setMonth(d.getMonth()+n);setData(d.toISOString().slice(0,10))}
-  const t=totals(s,new Date().getFullYear())
-  const speseCorr=s.expenses.filter(e=>!IS_PATRIMONIO(e.category))
-  const speseAttive=data?speseCorr.filter(e=>!e.date||new Date(e.date)>=new Date(data)):speseCorr
-  const speseScadute=data?speseCorr.filter(e=>e.date&&new Date(e.date)<new Date(data)):[]
-  const mensileAttive=speseAttive.reduce((n,e)=>n+toMensile(e.amount,e.freq),0)
-  const risparmio=speseScadute.reduce((n,e)=>n+toMensile(e.amount,e.freq),0)
-  const tasse=Math.max(0,t.tax+t.contributions-t.reserve)
-  return (
-    <div className="flex flex-col gap-6">
-      <Heading kicker="SIMULAZIONE" title="Previsioni future" text="Vedi come cambia la situazione nel tempo."/>
-      <Card>
-        <div className="flex flex-wrap gap-3 items-end">
-          <Field label="Data di simulazione"><input type="date" value={data} onChange={e=>setData(e.target.value)}/></Field>
-          <div className="flex gap-2 pb-0.5">{[[1,'+1m'],[3,'+3m'],[6,'+6m'],[12,'+1a']].map(([n,l])=><button key={l} onClick={()=>addMesi(Number(n))} className="h-10 rounded-xl border px-3 text-sm hover:bg-secondary">{l}</button>)}</div>
-        </div>
-      </Card>
-      {data&&<>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Metric label="Liquidità attuale" value={t.liquidity}/>
-          <Metric label="Spese mensili attive" value={mensileAttive}/>
-          <Metric label="Tasse P.IVA residue" value={tasse} warn={tasse>0}/>
-        </div>
-        {speseScadute.length>0&&<Card className="border-green-500/30 bg-green-50/50 dark:bg-green-950/20"><h3 className="font-semibold text-green-700 dark:text-green-400 mb-3">✅ Spese che cessano entro {dateIt(data)}</h3>{speseScadute.map(e=><div key={e.id} className="flex justify-between py-2 border-b last:border-0 text-sm"><span className="line-through text-muted-foreground">{e.description} · {FREQ_LABEL[e.freq]}</span><span className="text-green-600 font-semibold">-{money.format(toMensile(e.amount,e.freq))}/mese</span></div>)}<p className="mt-3 font-semibold text-green-700 dark:text-green-400">Risparmio: {money.format(risparmio)}/mese</p></Card>}
-        <Card><h3 className="font-semibold mb-3">Spese ancora attive</h3>{speseAttive.map(e=><div key={e.id} className="flex justify-between py-2 border-b last:border-0 text-sm"><span>{e.description} <span className="text-xs text-muted-foreground">· {FREQ_LABEL[e.freq]}</span></span><span className="font-semibold">{money.format(toMensile(e.amount,e.freq))}/mese</span></div>)}{!speseAttive.length&&<p className="text-muted-foreground text-sm">Nessuna spesa attiva</p>}</Card>
-      </>}
-    </div>
-  )
+function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+  const today=new Date().toISOString().slice(0,10)
+  const [data,setData]=useState(today)
+  const [simType,setSimType]=useState<SimulationType>('mutuo')
+  const [freq,setFreq]=useState<Freq>('mensile')
+  const [selectedId,setSelectedId]=useState(s.simulations[0]?.id??'')
+  useEffect(()=>{
+    if(s.simulations.length&&!s.simulations.some(item=>item.id===selectedId))setSelectedId(s.simulations[0].id)
+    if(!s.simulations.length&&selectedId)setSelectedId('')
+  },[s.simulations,selectedId])
+  const addMesi=(n:number)=>{const date=new Date();date.setMonth(date.getMonth()+n);setData(date.toISOString().slice(0,10))}
+  const submit=(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault()
+    const form=new FormData(e.currentTarget)
+    const isLoan=simType==='mutuo'||simType==='finanziamento'
+    const simulation:Simulation={
+      id:uid(),name:String(form.get('name')),type:simType,
+      amount:Number(form.get('amount')),downPayment:isLoan?Number(form.get('downPayment')||0):0,
+      interestRate:isLoan?Number(form.get('interestRate')||0):0,
+      durationMonths:isLoan?Number(form.get('durationYears'))*12:0,
+      freq:isLoan?'mensile':freq,startDate:String(form.get('startDate')??'')||undefined,
+      kind:String(form.get('kind')) as Kind
+    }
+    if(!simulation.name||simulation.amount<=0||(isLoan&&simulation.durationMonths<=0))return
+    set(value=>({...value,simulations:[simulation,...value.simulations]}));setSelectedId(simulation.id)
+    e.currentTarget.reset();setSimType('mutuo');setFreq('mensile')
+  }
+  const selected=s.simulations.find(item=>item.id===selectedId)
+  const recurringIncome=s.incomes.filter(item=>item.recurring&&(!item.date||item.date<=data)).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
+  const recurringPiva=s.incomes.filter(item=>item.kind==='piva'&&item.recurring&&(!item.date||item.date<=data)).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
+  const activeSubscriptions=s.expenses.filter(item=>(item.recurring||item.subscription)&&(!item.subscription||isActiveAt(item.subscription.startDate,item.subscription.endDate,data)))
+  const recurringExpenses=activeSubscriptions.reduce((total,item)=>total+toMensile(item.amount,item.freq),0)
+  const activeFinancing=s.financings.filter(item=>isActiveAt(item.startDate,item.endDate,data)).reduce((total,item)=>total+toMensile(item.paymentAmount,item.freq),0)
+  const taxReserve=recurringPiva*s.profile.taxReserve/100
+  const baseMonthly=recurringIncome-recurringExpenses-activeFinancing-taxReserve
+  let monthlyImpact=0,upfrontImpact=0,scenarioPayment=0
+  if(selected){
+    if(selected.type==='mutuo'||selected.type==='finanziamento'){
+      upfrontImpact=selected.downPayment
+      scenarioPayment=monthlyPayment(Math.max(0,selected.amount-selected.downPayment),selected.interestRate,selected.durationMonths)
+      monthlyImpact=-scenarioPayment
+    }else if(selected.freq==='unica'){
+      upfrontImpact=selected.type==='spesa'?selected.amount:-selected.amount
+    }else{
+      monthlyImpact=(selected.type==='entrata'?1:-1)*toMensile(selected.amount,selected.freq)
+    }
+  }
+  const projectedMonthly=baseMonthly+monthlyImpact
+  const liquidity=s.accounts.reduce((total,account)=>total+account.balance,0)
+  const projectedLiquidity=liquidity-upfrontImpact
+  const expiredSubscriptions=s.expenses.filter(item=>item.subscription?.endDate&&item.subscription.endDate<data)
+  const releasedMonthly=expiredSubscriptions.reduce((total,item)=>total+toMensile(item.amount,item.freq),0)
+  return <div className="flex flex-col gap-6">
+    <Heading kicker="SCENARI" title="Previsioni future" text="Salva più ipotesi, scegli quale simulare e vedi subito quanto resta o quanto manca."/>
+    <Card><div className="flex flex-wrap items-end gap-3"><Field label="Data della simulazione"><input type="date" value={data} onChange={e=>setData(e.target.value)}/></Field><div className="flex gap-2 pb-0.5">{[[1,'+1m'],[3,'+3m'],[6,'+6m'],[12,'+1a']].map(([months,label])=><button key={label} onClick={()=>addMesi(Number(months))} className="h-10 rounded-xl border px-3 text-sm hover:bg-secondary">{label}</button>)}</div>{s.simulations.length>0&&<Field label="Scenario da simulare"><select value={selectedId} onChange={e=>setSelectedId(e.target.value)}>{s.simulations.map(item=><option key={item.id} value={item.id}>{item.name} · {SIMULATION_LABEL[item.type]}</option>)}</select></Field>}</div></Card>
+    <form onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
+      <Field label="Nome scenario"><input name="name" required placeholder="Es. Mutuo casa 25 anni"/></Field>
+      <Field label="Cosa vuoi simulare"><select value={simType} onChange={e=>setSimType(e.target.value as SimulationType)}>{(Object.keys(SIMULATION_LABEL) as SimulationType[]).map(type=><option key={type} value={type}>{SIMULATION_LABEL[type]}</option>)}</select></Field>
+      <Field label="Ambito"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
+      <Field label={simType==='mutuo'||simType==='finanziamento'?'Costo totale (€)':'Importo (€)'}><input name="amount" type="number" min=".01" step=".01" required/></Field>
+      {(simType==='mutuo'||simType==='finanziamento')?<><Field label="Anticipo (€)"><input name="downPayment" type="number" min="0" step=".01" defaultValue="0"/></Field><Field label="Tasso annuo %"><input name="interestRate" type="number" min="0" step=".01" defaultValue="0"/></Field><Field label="Durata (anni)"><input name="durationYears" type="number" min="1" max="50" required/></Field></>:<Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field>}
+      <Field label="Data inizio (facoltativa)"><input name="startDate" type="date"/></Field>
+      <button className="self-end h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground md:col-span-1"><Plus className="mr-2 inline size-4"/>Salva scenario</button>
+    </form>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Margine mensile attuale" value={baseMonthly} warn={baseMonthly<0}/><Metric label="Impatto scenario/mese" value={monthlyImpact}/><Metric label={projectedMonthly>=0?'Residuo mensile':'Mancanza mensile'} value={Math.abs(projectedMonthly)} warn={projectedMonthly<0}/><Metric label="Liquidità dopo anticipo" value={projectedLiquidity} warn={projectedLiquidity<0}/></div>
+    {selected&&<Card className={projectedMonthly<0||projectedLiquidity<0?'border-destructive/40 bg-destructive/5':'border-green-500/30 bg-green-50/50 dark:bg-green-950/20'}><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{SIMULATION_LABEL[selected.type]}</p><h3 className="mt-1 text-xl font-semibold">{selected.name}</h3><p className="mt-2 text-sm text-muted-foreground">Importo {money.format(selected.amount)}{selected.downPayment>0?` · Anticipo ${money.format(selected.downPayment)}`:''}{scenarioPayment>0?` · Rata stimata ${money.format(scenarioPayment)}/mese`:''}</p></div><div className={`rounded-xl px-4 py-2 text-sm font-semibold ${projectedMonthly>=0&&projectedLiquidity>=0?'bg-green-600 text-white':'bg-destructive text-destructive-foreground'}`}>{projectedMonthly>=0&&projectedLiquidity>=0?'Sostenibile con i dati inseriti':`Mancano ${money.format(Math.max(0,-projectedMonthly))}/mese`}</div></div><p className="mt-4 text-xs text-muted-foreground">Stima indicativa: non include spese bancarie, assicurazioni, variazioni dei tassi o costi non registrati.</p></Card>}
+    {expiredSubscriptions.length>0&&<Card><h3 className="font-semibold">Abbonamenti conclusi entro la data scelta</h3><p className="mt-1 text-sm text-muted-foreground">Liberano {money.format(releasedMonthly)} al mese.</p><div className="mt-3">{expiredSubscriptions.map(item=><div key={item.id} className="flex justify-between border-t py-2 text-sm"><span>{item.description}</span><span className="text-green-600">+{money.format(toMensile(item.amount,item.freq))}/mese</span></div>)}</div></Card>}
+    <section><h3 className="mb-3 font-semibold">Scenari salvati</h3><div className="grid gap-3 md:grid-cols-2">{s.simulations.map(item=><Card key={item.id} className={item.id===selectedId?'border-primary':''}><div className="flex items-start justify-between gap-3"><button onClick={()=>setSelectedId(item.id)} className="min-w-0 flex-1 text-left"><p className="text-xs font-semibold text-primary">{SIMULATION_LABEL[item.type]}</p><p className="font-semibold">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{money.format(item.amount)} · {item.kind==='piva'?'P.IVA':'Personale'}</p></button><button onClick={()=>set(value=>({...value,simulations:value.simulations.filter(scenario=>scenario.id!==item.id)}))} aria-label="Elimina scenario"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></Card>)}{!s.simulations.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Salva il primo scenario per iniziare il confronto.</p></Card>}</div></section>
+  </div>
 }
 
 // ── SETUP ──
