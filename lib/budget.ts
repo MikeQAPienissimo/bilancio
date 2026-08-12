@@ -1,72 +1,15 @@
-export type EntryKind = 'personale' | 'piva'
-export type ExpenseKind = 'personale' | 'piva'
-
-export type Income = { id: string; date: string; description: string; amount: number; kind: EntryKind }
-export type Expense = { id: string; date: string; description: string; amount: number; kind: ExpenseKind; category: string }
-export type TaxProfile = {
-  name: string
-  ateco: string
-  profitability: number
-  substituteTax: number
-  contributions: number
-  taxReserve: number
-}
-export type BudgetState = { profile: TaxProfile; incomes: Income[]; expenses: Expense[] }
-
-const year = new Date().getFullYear()
-const d = (month: number, day: number) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-
-export const demoState: BudgetState = {
-  profile: { name: 'Andrea Rossi', ateco: '62.01.00', profitability: 67, substituteTax: 5, contributions: 26.07, taxReserve: 35 },
-  incomes: [
-    { id: 'i1', date: d(1, 12), description: 'Stipendio', amount: 2200, kind: 'personale' },
-    { id: 'i2', date: d(1, 24), description: 'Sito web — Studio Forma', amount: 1800, kind: 'piva' },
-    { id: 'i3', date: d(2, 12), description: 'Stipendio', amount: 2200, kind: 'personale' },
-    { id: 'i4', date: d(2, 27), description: 'Consulenza prodotto', amount: 2450, kind: 'piva' },
-    { id: 'i5', date: d(3, 12), description: 'Stipendio', amount: 2200, kind: 'personale' },
-    { id: 'i6', date: d(3, 21), description: 'Identità visiva — Noma', amount: 1320, kind: 'piva' },
-    { id: 'i7', date: d(4, 12), description: 'Stipendio', amount: 2200, kind: 'personale' },
-    { id: 'i8', date: d(4, 29), description: 'Consulenza UX', amount: 2100, kind: 'piva' },
-    { id: 'i9', date: d(5, 12), description: 'Stipendio', amount: 2200, kind: 'personale' },
-    { id: 'i10', date: d(5, 26), description: 'Dashboard SaaS', amount: 2800, kind: 'piva' },
-  ],
-  expenses: [
-    { id: 'e1', date: d(1, 5), description: 'Affitto', amount: 780, kind: 'personale', category: 'Casa' },
-    { id: 'e2', date: d(1, 18), description: 'Adobe Creative Cloud', amount: 67, kind: 'piva', category: 'Software' },
-    { id: 'e3', date: d(2, 5), description: 'Affitto', amount: 780, kind: 'personale', category: 'Casa' },
-    { id: 'e4', date: d(2, 14), description: 'Spesa alimentare', amount: 284, kind: 'personale', category: 'Alimentari' },
-    { id: 'e5', date: d(3, 5), description: 'Affitto', amount: 780, kind: 'personale', category: 'Casa' },
-    { id: 'e6', date: d(3, 16), description: 'Hosting e domini', amount: 129, kind: 'piva', category: 'Servizi' },
-    { id: 'e7', date: d(4, 5), description: 'Affitto', amount: 780, kind: 'personale', category: 'Casa' },
-    { id: 'e8', date: d(4, 20), description: 'Trasporti', amount: 176, kind: 'personale', category: 'Mobilità' },
-    { id: 'e9', date: d(5, 5), description: 'Affitto', amount: 780, kind: 'personale', category: 'Casa' },
-    { id: 'e10', date: d(5, 22), description: 'Commercialista', amount: 420, kind: 'piva', category: 'Professionisti' },
-  ],
-}
-
-export const money = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
-export const dateIt = (value: string) => new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`))
-export const uid = () => crypto.randomUUID()
-
-export function totals(state: BudgetState, selectedYear: number) {
-  const incomes = state.incomes.filter((item) => new Date(item.date).getFullYear() === selectedYear)
-  const expenses = state.expenses.filter((item) => new Date(item.date).getFullYear() === selectedYear)
-  const personalIncome = incomes.filter((i) => i.kind === 'personale').reduce((a, b) => a + b.amount, 0)
-  const pivaIncome = incomes.filter((i) => i.kind === 'piva').reduce((a, b) => a + b.amount, 0)
-  const personalExpense = expenses.filter((i) => i.kind === 'personale').reduce((a, b) => a + b.amount, 0)
-  const pivaExpense = expenses.filter((i) => i.kind === 'piva').reduce((a, b) => a + b.amount, 0)
-  const taxable = pivaIncome * state.profile.profitability / 100
-  const contributions = taxable * state.profile.contributions / 100
-  const tax = Math.max(0, taxable - contributions) * state.profile.substituteTax / 100
-  const reserve = pivaIncome * state.profile.taxReserve / 100
-  return { incomes, expenses, personalIncome, pivaIncome, personalExpense, pivaExpense, totalIncome: personalIncome + pivaIncome, totalExpense: personalExpense + pivaExpense, taxable, contributions, tax, reserve, available: personalIncome + pivaIncome - personalExpense - pivaExpense - reserve }
-}
-
-export function monthlyData(state: BudgetState, selectedYear: number) {
-  const labels = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
-  return labels.map((month, index) => ({
-    month,
-    entrate: state.incomes.filter((i) => new Date(i.date).getFullYear() === selectedYear && new Date(i.date).getMonth() === index).reduce((a, b) => a + b.amount, 0),
-    spese: state.expenses.filter((i) => new Date(i.date).getFullYear() === selectedYear && new Date(i.date).getMonth() === index).reduce((a, b) => a + b.amount, 0),
-  }))
-}
+export type Kind = 'personale' | 'piva'
+export type Income = { id:string; date:string; description:string; amount:number; kind:Kind; accountId?:string; recurring?:boolean }
+export type Expense = Income & { category:string }
+export type Account = { id:string; name:string; type:'conto'|'carta'; balance:number; limit:number }
+export type Category = { id:string; name:string; budget:number }
+export type Asset = { id:string; name:string; type:'investimento'|'polizza'; paid:number; value:number }
+export type Deadline = { id:string; title:string; date:string; amount:number; paid:boolean; priority:'alta'|'media'|'bassa' }
+export type TaxProfile = { name:string; ateco:string; profitability:number; substituteTax:number; contributions:number; taxReserve:number }
+export type BudgetState = { version:number; profile:TaxProfile; incomes:Income[]; expenses:Expense[]; accounts:Account[]; categories:Category[]; assets:Asset[]; deadlines:Deadline[] }
+const year=new Date().getFullYear(); const d=(m:number,n:number)=>`${year}-${String(m).padStart(2,'0')}-${String(n).padStart(2,'0')}`
+export const demoState:BudgetState={version:2,profile:{name:'Andrea Rossi',ateco:'62.01.00',profitability:67,substituteTax:5,contributions:26.07,taxReserve:35},accounts:[{id:'a1',name:'Conto principale',type:'conto',balance:12840,limit:0},{id:'a2',name:'Carta Gold',type:'carta',balance:-740,limit:3000},{id:'a3',name:'Conto P.IVA',type:'conto',balance:6250,limit:0}],categories:[{id:'c1',name:'Casa',budget:1000},{id:'c2',name:'Alimentari',budget:450},{id:'c3',name:'Mobilità',budget:300},{id:'c4',name:'Software',budget:180},{id:'c5',name:'Servizi',budget:250},{id:'c6',name:'Professionisti',budget:500}],assets:[{id:'as1',name:'ETF Piano futuro',type:'investimento',paid:8200,value:9140},{id:'as2',name:'Fondo pensione',type:'polizza',paid:4200,value:4380}],deadlines:[{id:'d1',title:'Acconto INPS',date:d(6,30),amount:1680,paid:false,priority:'alta'},{id:'d2',title:'Assicurazione auto',date:d(7,12),amount:620,paid:false,priority:'media'},{id:'d3',title:'Rinnovo dominio',date:d(8,2),amount:42,paid:false,priority:'bassa'}],incomes:[['i1',1,12,'Stipendio',2200,'personale','a1'],['i2',1,24,'Sito web — Studio Forma',1800,'piva','a3'],['i3',2,12,'Stipendio',2200,'personale','a1'],['i4',2,27,'Consulenza prodotto',2450,'piva','a3'],['i5',3,12,'Stipendio',2200,'personale','a1'],['i6',4,29,'Consulenza UX',2100,'piva','a3'],['i7',5,12,'Stipendio',2200,'personale','a1']].map(x=>({id:String(x[0]),date:d(Number(x[1]),Number(x[2])),description:String(x[3]),amount:Number(x[4]),kind:x[5] as Kind,accountId:String(x[6])})),expenses:[['e1',1,5,'Affitto',780,'personale','Casa'],['e2',1,18,'Adobe Creative Cloud',67,'piva','Software'],['e3',2,5,'Affitto',780,'personale','Casa'],['e4',2,14,'Spesa alimentare',284,'personale','Alimentari'],['e5',3,5,'Affitto',780,'personale','Casa'],['e6',3,16,'Hosting e domini',129,'piva','Servizi'],['e7',4,20,'Trasporti',176,'personale','Mobilità'],['e8',5,22,'Commercialista',420,'piva','Professionisti']].map(x=>({id:String(x[0]),date:d(Number(x[1]),Number(x[2])),description:String(x[3]),amount:Number(x[4]),kind:x[5] as Kind,category:String(x[6]),accountId:x[5]==='piva'?'a3':'a1'}))}
+export const money=new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR',maximumFractionDigits:0}); export const dateIt=(v:string)=>new Intl.DateTimeFormat('it-IT',{day:'2-digit',month:'short'}).format(new Date(`${v}T12:00:00`)); export const uid=()=>crypto.randomUUID()
+export function migrate(v:Partial<BudgetState>):BudgetState{return {...demoState,...v,version:2,profile:{...demoState.profile,...v.profile},accounts:v.accounts||demoState.accounts,categories:v.categories||demoState.categories,assets:v.assets||demoState.assets,deadlines:v.deadlines||demoState.deadlines}}
+export function totals(s:BudgetState,y:number){const incomes=s.incomes.filter(i=>new Date(i.date).getFullYear()===y),expenses=s.expenses.filter(i=>new Date(i.date).getFullYear()===y),sum=(a:{amount:number}[])=>a.reduce((n,x)=>n+x.amount,0),pivaIncome=sum(incomes.filter(i=>i.kind==='piva')),taxable=pivaIncome*s.profile.profitability/100,contributions=taxable*s.profile.contributions/100,tax=Math.max(0,taxable-contributions)*s.profile.substituteTax/100,reserve=pivaIncome*s.profile.taxReserve/100,totalIncome=sum(incomes),totalExpense=sum(expenses),liquidity=s.accounts.reduce((n,a)=>n+a.balance,0),assets=s.assets.reduce((n,a)=>n+a.value,0);return{incomes,expenses,pivaIncome,taxable,contributions,tax,reserve,totalIncome,totalExpense,available:totalIncome-totalExpense-reserve,liquidity,assets,netWorth:liquidity+assets}}
+export function monthlyData(s:BudgetState,y:number){return ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'].map((month,index)=>({month,entrate:s.incomes.filter(i=>new Date(i.date).getFullYear()===y&&new Date(i.date).getMonth()===index).reduce((n,x)=>n+x.amount,0),spese:s.expenses.filter(i=>new Date(i.date).getFullYear()===y&&new Date(i.date).getMonth()===index).reduce((n,x)=>n+x.amount,0)}))}
