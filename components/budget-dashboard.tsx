@@ -1,8 +1,8 @@
 'use client'
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ArrowDownLeft, BadgeEuro, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { ArrowDownLeft, BadgeEuro, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
 import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, Simulation, SimulationType, createEmptyState, dateFullIt, dateIt, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
@@ -339,12 +339,26 @@ const InstallmentFreqSelect = ({value,onChange}:{value:Freq;onChange:(v:Freq)=>v
     {(Object.keys(FREQ_LABEL) as Freq[]).filter(f=>f!=='unica').map(f=><option key={f} value={f}>{FREQ_LABEL[f]}</option>)}
   </select>
 )
+const EditButton = ({onClick,label}:{onClick:()=>void;label:string}) => <button type="button" onClick={onClick} aria-label={label} title={label}><Pencil className="size-4 text-muted-foreground hover:text-primary"/></button>
+const Gauge = ({label,value,detail,invert=false}:{label:string;value:number;detail:string;invert?:boolean}) => {
+  const normalized=Math.max(0,Math.min(100,Number.isFinite(value)?value:0))
+  const bad=invert?normalized>65:normalized<50
+  const color=bad?'var(--destructive)':normalized>75?'hsl(142 71% 38%)':'var(--primary)'
+  return <div className="rounded-2xl border bg-card p-4 text-center shadow-sm"><div className="mx-auto h-28 max-w-44"><ResponsiveContainer><RadialBarChart cx="50%" cy="82%" innerRadius="72%" outerRadius="100%" startAngle={180} endAngle={0} data={[{value:normalized}]}><PolarAngleAxis type="number" domain={[0,100]} tick={false}/><RadialBar dataKey="value" background cornerRadius={12} fill={color}/></RadialBarChart></ResponsiveContainer></div><p className="-mt-7 text-2xl font-semibold">{Math.round(normalized)}%</p><p className="mt-2 text-sm font-semibold">{label}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div>
+}
 
 // ── DASHBOARD ──
 function Dashboard({s,year}:{s:BudgetState;year:number}) {
   const t = totals(s,year), m = monthlyData(s,year)
-  const cats = s.categories.map(c=>({name:c.name,value:t.expenses.filter(e=>e.category===c.name).reduce((n,e)=>n+e.amount,0)})).filter(x=>x.value)
+  const categoryNames=[...new Set(t.expenses.map(expense=>expense.category||'Senza categoria'))]
+  const cats = categoryNames.map(name=>({name,value:t.expenses.filter(e=>e.category===name).reduce((n,e)=>n+e.amount,0)})).filter(x=>x.value).sort((a,b)=>b.value-a.value)
   const limPerc = (t.limiteAttivo<Infinity && t.limiteAttivo>0 && !isNaN(t.usatoLimite)) ? Math.min(100,t.usatoLimite*100) : null
+  const monthlyIncome=t.totalIncome/12
+  const savingsRate=monthlyIncome>0?(monthlyIncome-t.mensileSpese)/monthlyIncome*100:0
+  const debtRatio=monthlyIncome>0?t.monthlyFinancing/monthlyIncome*100:0
+  const fiscalDue=t.tax+t.contributions
+  const reserveCoverage=fiscalDue>0?t.reserve/fiscalDue*100:100
+  const budgetUsage=limPerc??0
   return (
     <div className="flex flex-col gap-7">
       <Heading kicker="PANORAMICA" title="Il quadro è sotto controllo." text="Liquidità, patrimonio e flussi in un unico posto."/>
@@ -358,10 +372,10 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
         </Card>
         <Metric label="Riserva fiscale P.IVA" value={t.reserve} detail={`Tasse stimate: ${money.format(t.tax+t.contributions)}`}/>
       </div>
-      <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
-        <Card><h3 className="font-semibold">Andamento mensile</h3><p className="text-sm text-muted-foreground">Entrate e spese {year}</p><div className="mt-4 h-60"><ResponsiveContainer><AreaChart data={m}><CartesianGrid vertical={false} stroke="var(--border)"/><XAxis dataKey="month" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip formatter={v=>money.format(Number(v))}/><Area dataKey="entrate" stroke="var(--chart-1)" fill="var(--chart-1)" fillOpacity={.13}/><Area dataKey="spese" stroke="var(--chart-2)" fill="transparent"/></AreaChart></ResponsiveContainer></div></Card>
-        <Card><h3 className="font-semibold">Spese per categoria</h3><div className="h-44"><ResponsiveContainer><PieChart><Pie data={cats} dataKey="value" innerRadius={48} outerRadius={72}>{cats.map((_,i)=><Cell key={i} fill={`var(--chart-${i%3+1})`}/>)}</Pie><Tooltip formatter={v=>money.format(Number(v))}/></PieChart></ResponsiveContainer></div>{cats.slice(0,4).map(x=><div key={x.name} className="flex justify-between py-1 text-sm"><span className="text-muted-foreground">{x.name}</span><b>{money.format(x.value)}</b></div>)}</Card>
-      </div>
+      <section className="flex flex-col gap-4"><div><h3 className="text-xl font-semibold">Grafici e indicatori</h3><p className="text-sm text-muted-foreground">Flussi, composizione delle spese e rapporti chiave aggiornati con i dati inseriti.</p></div><div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
+        <Card><h3 className="font-semibold">Entrate e spese per mese</h3><p className="text-sm text-muted-foreground">Confronto a colonne · {year}</p><div className="mt-4 h-64"><ResponsiveContainer><BarChart data={m} barGap={4}><CartesianGrid vertical={false} stroke="var(--border)"/><XAxis dataKey="month" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip formatter={v=>money.format(Number(v))}/><Bar dataKey="entrate" name="Entrate" fill="var(--chart-1)" radius={[5,5,0,0]}/><Bar dataKey="spese" name="Spese" fill="var(--chart-2)" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></Card>
+        <Card><h3 className="font-semibold">Spese per categoria</h3>{cats.length?<><div className="h-44"><ResponsiveContainer><PieChart><Pie data={cats} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72}>{cats.map((_,i)=><Cell key={i} fill={`var(--chart-${i%5+1})`}/>)}</Pie><Tooltip formatter={v=>money.format(Number(v))}/></PieChart></ResponsiveContainer></div>{cats.slice(0,5).map(x=><div key={x.name} className="flex justify-between py-1 text-sm"><span className="text-muted-foreground">{x.name}</span><b>{money.format(x.value)}</b></div>)}</>:<p className="grid h-56 place-items-center text-sm text-muted-foreground">Inserisci delle spese per vedere la composizione.</p>}</Card>
+      </div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Gauge label="Tasso di risparmio" value={savingsRate} detail={`${money.format(Math.max(0,monthlyIncome-t.mensileSpese))} potenziali al mese`}/><Gauge label="Peso delle rate" value={debtRatio} detail={`${money.format(t.monthlyFinancing)} su ${money.format(monthlyIncome)}/mese`} invert/><Gauge label="Copertura fiscale" value={reserveCoverage} detail={`${money.format(t.reserve)} accantonati`}/><Gauge label="Uso limite spesa" value={budgetUsage} detail={limPerc===null?'Limite non impostato':`${money.format(t.mensileSpese)} di ${money.format(t.limiteAttivo)}`} invert/></div></section>
     </div>
   )
 }
@@ -372,14 +386,20 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
   const [freq,setFreq] = useState<Freq>('mensile')
   const [isSubscription,setIsSubscription] = useState(false)
   const [openEnded,setOpenEnded] = useState(false)
+  const [editing,setEditing] = useState<{type:'income';item:Income}|{type:'expense';item:Expense}|null>(null)
+  const editItem=editing?.item
+  const editExpense=editing?.type==='expense'?editing.item:undefined
+  const resetForm=()=>{setEditing(null);setFreq('mensile');setIsSubscription(false);setOpenEnded(false);setMode('spesa')}
+  const editIncome=(item:Income)=>{setEditing({type:'income',item});setMode('entrata');setFreq(item.freq??'mensile');setIsSubscription(false);setOpenEnded(false)}
+  const editExpenseItem=(item:Expense)=>{setEditing({type:'expense',item});setMode('spesa');setFreq(item.freq);setIsSubscription(Boolean(item.subscription));setOpenEnded(item.subscription?.endDate===null)}
   const submit = (e:FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const f=new FormData(e.currentTarget)
     const accountId=String(f.get('accountId') ?? '') || undefined
-    const base:Income={id:uid(),date:String(f.get('date')),description:String(f.get('description')),amount:Number(f.get('amount')),kind:String(f.get('kind')) as Kind,accountId,recurring:Boolean(f.get('recurring'))||isSubscription,freq}
+    const base:Income={id:editItem?.id??uid(),date:String(f.get('date')),description:String(f.get('description')),amount:Number(f.get('amount')),kind:String(f.get('kind')) as Kind,accountId,recurring:Boolean(f.get('recurring'))||isSubscription,freq}
     if(!base.description||base.amount<=0)return
     if(mode==='entrata') {
-      set(x=>({...x,incomes:[base,...x.incomes]}))
+      set(x=>({...x,incomes:[base,...x.incomes.filter(item=>item.id!==editItem?.id)],expenses:x.expenses.filter(item=>item.id!==editItem?.id)}))
     } else {
       const expense:Expense={
         ...base,
@@ -390,9 +410,9 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
           endDate:openEnded?null:String(f.get('endDate'))
         }:undefined
       }
-      set(x=>({...x,expenses:[expense,...x.expenses]}))
+      set(x=>({...x,expenses:[expense,...x.expenses.filter(item=>item.id!==editItem?.id)],incomes:x.incomes.filter(item=>item.id!==editItem?.id)}))
     }
-    e.currentTarget.reset();setFreq('mensile');setIsSubscription(false);setOpenEnded(false)
+    e.currentTarget.reset();resetForm()
   }
   const incomes=s.incomes.filter(x=>new Date(x.date).getFullYear()===year).sort((a,b)=>b.date.localeCompare(a.date))
   const personalIncomes=incomes.filter(x=>x.kind==='personale')
@@ -403,25 +423,26 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
   const sum=(items:{amount:number}[])=>items.reduce((total,item)=>total+item.amount,0)
   const removeIncome=(id:string)=>set(x=>({...x,incomes:x.incomes.filter(item=>item.id!==id)}))
   const removeExpense=(id:string)=>set(x=>({...x,expenses:x.expenses.filter(item=>item.id!==id)}))
-  const incomeList=(items:Income[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><b className="text-sm">{item.description}</b><p className="text-xs text-muted-foreground">{dateIt(item.date)}{item.recurring&&item.freq?` · ${FREQ_LABEL[item.freq]}`:''}</p></div><b className="text-sm text-green-600">+{money.format(item.amount)}</b><button onClick={()=>removeIncome(item.id)} aria-label="Elimina entrata"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
-  const expenseList=(items:Expense[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{item.description}</b>{item.subscription&&<span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">ABBONAMENTO</span>}{item.kind==='piva'&&<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">P.IVA</span>}</div><p className="text-xs text-muted-foreground">{item.category||'Senza categoria'} · {FREQ_LABEL[item.freq]}</p>{item.subscription&&<p className="mt-1 text-xs text-muted-foreground">Inizio: {item.subscription.startDate?dateIt(item.subscription.startDate):'non indicato'} · Fine: {item.subscription.endDate?dateIt(item.subscription.endDate):'senza scadenza'}</p>}</div><b className="text-sm text-destructive">-{money.format(item.amount)}</b><button onClick={()=>removeExpense(item.id)} aria-label="Elimina spesa"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
+  const incomeList=(items:Income[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><b className="text-sm">{item.description}</b><p className="text-xs text-muted-foreground">{dateIt(item.date)}{item.recurring&&item.freq?` · ${FREQ_LABEL[item.freq]}`:''}</p></div><b className="text-sm text-green-600">+{money.format(item.amount)}</b><EditButton onClick={()=>editIncome(item)} label="Modifica entrata"/><button onClick={()=>removeIncome(item.id)} aria-label="Elimina entrata"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
+  const expenseList=(items:Expense[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{item.description}</b>{item.subscription&&<span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">ABBONAMENTO</span>}{item.kind==='piva'&&<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">P.IVA</span>}</div><p className="text-xs text-muted-foreground">{item.category||'Senza categoria'} · {FREQ_LABEL[item.freq]}</p>{item.subscription&&<p className="mt-1 text-xs text-muted-foreground">Inizio: {item.subscription.startDate?dateIt(item.subscription.startDate):'non indicato'} · Fine: {item.subscription.endDate?dateIt(item.subscription.endDate):'senza scadenza'}</p>}</div><b className="text-sm text-destructive">-{money.format(item.amount)}</b><EditButton onClick={()=>editExpenseItem(item)} label="Modifica spesa"/><button onClick={()=>removeExpense(item.id)} aria-label="Elimina spesa"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
   return (
     <div className="flex flex-col gap-6">
       <Heading kicker="REGISTRO" title="Entrate e spese" text={`Movimenti ${year}, già separati per natura e attività.`}/>
       <div className="grid gap-4 sm:grid-cols-3"><Metric label="Entrate personali" value={sum(personalIncomes)}/><Metric label="Introiti P.IVA" value={sum(pivaIncomes)}/><Metric label="Spese" value={sum(expenses)}/></div>
-      <form onSubmit={submit} className="grid gap-3 rounded-2xl border bg-card p-5 md:grid-cols-4">
+      <form key={editItem?.id??'new-movement'} onSubmit={submit} className="grid gap-3 rounded-2xl border bg-card p-5 md:grid-cols-4">
+        {editing&&<div className="col-span-full flex items-center justify-between rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary"><span>Stai modificando “{editItem?.description}”</span><button type="button" onClick={resetForm} className="text-xs">Annulla modifica</button></div>}
         <Field label="Operazione"><select value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="spesa">Spesa</option><option value="entrata">Entrata</option></select></Field>
-        <Field label="Data"><input name="date" type="date" required defaultValue={new Date().toISOString().slice(0,10)}/></Field>
-        <Field label="Descrizione"><input name="description" required/></Field>
-        <Field label="Importo (€)"><input name="amount" type="number" min=".01" step=".01" required/></Field>
-        <Field label="Tipo"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
-        <Field label="Conto (facoltativo)"><select name="accountId"><option value="">Nessun conto</option>{s.accounts.map(a=><option key={a.id} value={a.id}>{TIPO_EMOJI[a.type]} {a.name}</option>)}</select></Field>
+        <Field label="Data"><input name="date" type="date" required defaultValue={editItem?.date??new Date().toISOString().slice(0,10)}/></Field>
+        <Field label="Descrizione"><input name="description" required defaultValue={editItem?.description}/></Field>
+        <Field label="Importo (€)"><input name="amount" type="number" min=".01" step=".01" required defaultValue={editItem?.amount}/></Field>
+        <Field label="Tipo"><select name="kind" defaultValue={editItem?.kind??'personale'}><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
+        <Field label="Conto (facoltativo)"><select name="accountId" defaultValue={editItem?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(a=><option key={a.id} value={a.id}>{TIPO_EMOJI[a.type]} {a.name}</option>)}</select></Field>
         <Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field>
-        {mode==='spesa'&&<Field label="Categoria"><input name="category" list="expense-categories" required placeholder="Es. Casa, Auto..."/><datalist id="expense-categories">{s.categories.map(c=><option key={c.id} value={c.name}/>)}</datalist></Field>}
-        <label className="flex items-center gap-2 text-sm col-span-full"><input name="recurring" type="checkbox"/>Ricorrente</label>
+        {mode==='spesa'&&<Field label="Categoria"><input name="category" list="expense-categories" required placeholder="Es. Casa, Auto..." defaultValue={editExpense?.category}/><datalist id="expense-categories">{s.categories.map(c=><option key={c.id} value={c.name}/>)}</datalist></Field>}
+        <label className="flex items-center gap-2 text-sm col-span-full"><input name="recurring" type="checkbox" defaultChecked={editItem?.recurring}/>Ricorrente</label>
         {mode==='spesa'&&<label className="flex items-center gap-2 text-sm col-span-full"><input type="checkbox" checked={isSubscription} onChange={e=>setIsSubscription(e.target.checked)}/>È un abbonamento</label>}
-        {mode==='spesa'&&isSubscription&&<><Field label="Data inizio (facoltativa)"><input name="startDate" type="date"/></Field><Field label="Data fine"><input name="endDate" type="date" disabled={openEnded} required={!openEnded}/></Field><label className="flex items-center gap-2 self-end pb-2 text-sm md:col-span-2"><input type="checkbox" checked={openEnded} onChange={e=>setOpenEnded(e.target.checked)}/>Data fine non definita</label></>}
-        <button className="col-span-full h-11 rounded-xl bg-primary px-4 font-semibold text-primary-foreground"><Plus className="mr-2 inline size-4"/>Aggiungi</button>
+        {mode==='spesa'&&isSubscription&&<><Field label="Data inizio (facoltativa)"><input name="startDate" type="date" defaultValue={editExpense?.subscription?.startDate}/></Field><Field label="Data fine"><input name="endDate" type="date" disabled={openEnded} required={!openEnded} defaultValue={editExpense?.subscription?.endDate??''}/></Field><label className="flex items-center gap-2 self-end pb-2 text-sm md:col-span-2"><input type="checkbox" checked={openEnded} onChange={e=>setOpenEnded(e.target.checked)}/>Data fine non definita</label></>}
+        <button className="col-span-full h-11 rounded-xl bg-primary px-4 font-semibold text-primary-foreground">{editing?<Pencil className="mr-2 inline size-4"/>:<Plus className="mr-2 inline size-4"/>}{editing?'Salva modifiche':'Aggiungi'}</button>
       </form>
       <div className="grid gap-5 lg:grid-cols-2"><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Entrate personali</h3><p className="text-sm text-muted-foreground">Stipendio e altri introiti non P.IVA</p></div>{incomeList(personalIncomes,'Nessuna entrata personale')}</section><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Introiti P.IVA</h3><p className="text-sm text-muted-foreground">Fatture e compensi professionali</p></div>{incomeList(pivaIncomes,'Nessun introito P.IVA')}</section></div>
       <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Abbonamenti</h3><p className="text-sm text-muted-foreground">Costi ricorrenti con periodo definito o senza scadenza</p></div>{expenseList(subscriptions,'Nessun abbonamento')}</section>
@@ -434,13 +455,16 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
 function Accounts({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
   const [tipo,setTipo]=useState<Account['type']>('conto')
   const [showForm,setShowForm]=useState(false)
+  const [editing,setEditing]=useState<Account|null>(null)
+  const closeForm=()=>{setShowForm(false);setEditing(null);setTipo('conto')}
+  const edit=(account:Account)=>{setEditing(account);setTipo(account.type);setShowForm(true)}
   const submit=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const f=new FormData(e.currentTarget)
-    const base:Account={id:uid(),name:String(f.get('name')),type:tipo,balance:Number(f.get('balance')),limit:0}
+    const base:Account={id:editing?.id??uid(),name:String(f.get('name')),type:tipo,balance:Number(f.get('balance')),limit:editing?.limit??0}
     if(tipo==='carta'){base.plafond=Number(f.get('plafond'));base.giornoEstratto=Number(f.get('estratto'));base.giornoAddebito=Number(f.get('addebito'));base.tassoRevolving=Number(f.get('revolving'));base.usaRevolving=Boolean(f.get('useRev'))}
     if(tipo==='fido'){base.fidoMax=Number(f.get('fidoMax'));base.fidoAlert=Number(f.get('fidoAlert'));base.fidoTasso=Number(f.get('fidoTasso'))}
-    set(x=>({...x,accounts:[...x.accounts,base]}));e.currentTarget.reset();setShowForm(false)
+    set(x=>({...x,accounts:editing?x.accounts.map(item=>item.id===editing.id?base:item):[...x.accounts,base]}));e.currentTarget.reset();closeForm()
   }
   return (
     <div className="flex flex-col gap-6">
@@ -455,7 +479,7 @@ function Accounts({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction
             <Card key={a.id} className={`border-t-4 ${a.type==='piva'?'border-t-amber-500':a.type==='carta'?'border-t-red-500':a.type==='fido'?'border-t-gray-400':a.type==='contanti'?'border-t-green-500':'border-t-primary'}`}>
               <div className="flex justify-between items-start">
                 <div><p className="text-xs text-muted-foreground">{TIPO_EMOJI[a.type]} {TIPO_LABEL[a.type]}</p><h3 className="font-semibold">{a.name}</h3></div>
-                <button onClick={()=>set(x=>({...x,accounts:x.accounts.filter(v=>v.id!==a.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button>
+                <div className="flex gap-2"><EditButton onClick={()=>edit(a)} label="Modifica conto"/><button onClick={()=>set(x=>({...x,accounts:x.accounts.filter(v=>v.id!==a.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>
               </div>
               <p className={`mt-4 text-3xl font-semibold tabular-nums ${a.balance<0?'text-destructive':''}`}>{money.format(a.balance)}</p>
               {a.type==='carta'&&a.plafond&&<><div className="mt-3 h-1.5 rounded-full bg-secondary overflow-hidden"><div className="h-full rounded-full" style={{width:`${percCarta}%`,background:percCarta>80?'var(--destructive)':'var(--primary)'}}/></div><p className="mt-1 text-xs text-muted-foreground">Disponibile {money.format(a.plafond-usatoCarta)} · Estratto gg {a.giornoEstratto} · Addebito gg {a.giornoAddebito}</p>{a.tassoRevolving&&a.tassoRevolving>0&&<p className="text-xs text-amber-600">Revolving {a.tassoRevolving}%/anno</p>}</>}
@@ -463,18 +487,19 @@ function Accounts({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction
             </Card>
           )
         })}
-        <button onClick={()=>setShowForm(v=>!v)} className="rounded-2xl border-2 border-dashed border-border hover:border-primary flex items-center justify-center gap-2 text-muted-foreground hover:text-primary p-5 min-h-[120px] transition-colors">
+        <button onClick={()=>{setEditing(null);setTipo('conto');setShowForm(v=>!v)}} className="rounded-2xl border-2 border-dashed border-border hover:border-primary flex items-center justify-center gap-2 text-muted-foreground hover:text-primary p-5 min-h-[120px] transition-colors">
           <Plus className="size-5"/>Aggiungi conto
         </button>
       </div>
       {showForm&&(
-        <form onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
-          <Field label="Nome conto"><input name="name" required placeholder="Es. Intesa, Revolut..."/></Field>
+        <form key={editing?.id??'new-account'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
+          {editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica conto “{editing.name}”</p>}
+          <Field label="Nome conto"><input name="name" required placeholder="Es. Intesa, Revolut..." defaultValue={editing?.name}/></Field>
           <Field label="Tipo"><select value={tipo} onChange={e=>setTipo(e.target.value as Account['type'])}><option value="conto">🏦 Corrente</option><option value="piva">🧾 P.IVA</option><option value="carta">💳 Carta di credito</option><option value="fido">📋 Fido</option><option value="contanti">💵 Contanti</option></select></Field>
-          <Field label="Saldo attuale (€)"><input name="balance" type="number" step=".01" defaultValue="0"/></Field>
-          {tipo==='carta'&&<><Field label="Plafond (€)"><input name="plafond" type="number" placeholder="Es. 3000"/></Field><Field label="Giorno estratto"><input name="estratto" type="number" min="1" max="31" placeholder="Es. 1"/></Field><Field label="Giorno addebito"><input name="addebito" type="number" min="1" max="31" placeholder="Es. 15"/></Field><Field label="Tasso revolving (%/anno)"><input name="revolving" type="number" step=".1" placeholder="0"/></Field><label className="flex items-center gap-2 text-sm"><input name="useRev" type="checkbox"/>Usa revolving</label></>}
-          {tipo==='fido'&&<><Field label="Importo massimo (€)"><input name="fidoMax" type="number" placeholder="Es. 5000"/></Field><Field label="Soglia alert (€)"><input name="fidoAlert" type="number" placeholder="Es. 3000"/></Field><Field label="Tasso annuo (%)"><input name="fidoTasso" type="number" step=".1" placeholder="Es. 8.5"/></Field></>}
-          <div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">Aggiungi</button><button type="button" onClick={()=>setShowForm(false)} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
+          <Field label="Saldo attuale (€)"><input name="balance" type="number" step=".01" defaultValue={editing?.balance??0}/></Field>
+          {tipo==='carta'&&<><Field label="Plafond (€)"><input name="plafond" type="number" placeholder="Es. 3000" defaultValue={editing?.plafond}/></Field><Field label="Giorno estratto"><input name="estratto" type="number" min="1" max="31" placeholder="Es. 1" defaultValue={editing?.giornoEstratto}/></Field><Field label="Giorno addebito"><input name="addebito" type="number" min="1" max="31" placeholder="Es. 15" defaultValue={editing?.giornoAddebito}/></Field><Field label="Tasso revolving (%/anno)"><input name="revolving" type="number" step=".1" placeholder="0" defaultValue={editing?.tassoRevolving}/></Field><label className="flex items-center gap-2 text-sm"><input name="useRev" type="checkbox" defaultChecked={editing?.usaRevolving}/>Usa revolving</label></>}
+          {tipo==='fido'&&<><Field label="Importo massimo (€)"><input name="fidoMax" type="number" placeholder="Es. 5000" defaultValue={editing?.fidoMax}/></Field><Field label="Soglia alert (€)"><input name="fidoAlert" type="number" placeholder="Es. 3000" defaultValue={editing?.fidoAlert}/></Field><Field label="Tasso annuo (%)"><input name="fidoTasso" type="number" step=".1" placeholder="Es. 8.5" defaultValue={editing?.fidoTasso}/></Field></>}
+          <div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={closeForm} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
         </form>
       )}
     </div>
@@ -510,7 +535,9 @@ function Budgets({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetStateAc
 // ── PATRIMONIO ──
 function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
   const [showForm,setShowForm]=useState(false)
+  const [editingAsset,setEditingAsset]=useState<Asset|null>(null)
   const [movInvId,setMovInvId]=useState<string|null>(null)
+  const [editingMov,setEditingMov]=useState<{assetId:string;movimento:AssetMovimento}|null>(null)
   const [tipoMov,setTipoMov]=useState<AssetMovimento['tipo']>('versamento')
   const [freq,setFreq]=useState<Freq>('mensile')
   const pat=patrimoniTotals(s.assets)
@@ -519,21 +546,21 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
     e.preventDefault()
     const f=new FormData(e.currentTarget)
     const importo=Number(f.get('importoVers'))
-    const a:Asset={id:uid(),name:String(f.get('name')),type:String(f.get('type')) as Asset['type'],paid:importo,value:importo,istituto:String(f.get('istituto')),freq,importoVers:importo,movimenti:importo>0?[{id:uid(),data:new Date().toISOString().slice(0,10),tipo:'versamento',importo,note:'Primo versamento'}]:[]}
-    set(x=>({...x,assets:[...x.assets,a]}));e.currentTarget.reset();setShowForm(false)
+    const a:Asset={id:editingAsset?.id??uid(),name:String(f.get('name')),type:String(f.get('type')) as Asset['type'],paid:editingAsset?.paid??importo,value:editingAsset?.value??importo,istituto:String(f.get('istituto')),freq,importoVers:importo,movimenti:editingAsset?.movimenti??(importo>0?[{id:uid(),data:new Date().toISOString().slice(0,10),tipo:'versamento',importo,note:'Primo versamento'}]:[])}
+    set(x=>({...x,assets:editingAsset?x.assets.map(item=>item.id===editingAsset.id?a:item):[...x.assets,a]}));e.currentTarget.reset();setShowForm(false);setEditingAsset(null)
   }
   const addMov=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const f=new FormData(e.currentTarget)
-    const mov:AssetMovimento={id:uid(),data:String(f.get('data')),tipo:tipoMov,importo:Number(f.get('importo')),note:String(f.get('note'))||undefined}
+    const mov:AssetMovimento={id:editingMov?.movimento.id??uid(),data:String(f.get('data')),tipo:tipoMov,importo:Number(f.get('importo')),note:String(f.get('note'))||undefined}
     set(x=>({...x,assets:x.assets.map(a=>{
       if(a.id!==movInvId)return a
-      const movs=[...(a.movimenti??[]),mov]
+      const movs=editingMov?(a.movimenti??[]).map(item=>item.id===editingMov.movimento.id?mov:item):[...(a.movimenti??[]),mov]
       const versato=movs.filter(m=>m.tipo==='versamento').reduce((n,m)=>n+m.importo,0)
       const prelevato=movs.filter(m=>m.tipo==='prelievo').reduce((n,m)=>n+m.importo,0)
       const ult=[...movs].filter(m=>m.tipo==='aggiornamento_valore').sort((x,y)=>y.data.localeCompare(x.data))[0]
       return{...a,movimenti:movs,paid:versato-prelevato,value:ult?ult.importo:a.value}
-    })}));e.currentTarget.reset();setMovInvId(null)
+    })}));e.currentTarget.reset();setMovInvId(null);setEditingMov(null)
   }
   return (
     <div className="flex flex-col gap-6">
@@ -557,21 +584,21 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
             <Card key={a.id}>
               <div className="flex justify-between items-start">
                 <div><p className="text-xs text-muted-foreground">{catEmoji} {a.type}{a.istituto?` · ${a.istituto}`:''}</p><h3 className="font-semibold">{a.name}</h3>{a.freq&&<p className="text-xs text-muted-foreground mt-0.5">{FREQ_LABEL[a.freq]}{a.importoVers?` · ${money.format(a.importoVers)}`:''}</p>}</div>
-                <div className="flex gap-2"><button onClick={()=>setMovInvId(a.id)} className="text-xs border rounded-lg px-2 py-1 hover:bg-secondary">+ Mov.</button><button onClick={()=>set(x=>({...x,assets:x.assets.filter(v=>v.id!==a.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>
+                <div className="flex gap-2"><button onClick={()=>{setEditingMov(null);setMovInvId(a.id);setTipoMov('versamento')}} className="text-xs border rounded-lg px-2 py-1 hover:bg-secondary">+ Mov.</button><EditButton onClick={()=>{setEditingAsset(a);setFreq(a.freq??'mensile');setShowForm(true)}} label="Modifica investimento"/><button onClick={()=>set(x=>({...x,assets:x.assets.filter(v=>v.id!==a.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>
               </div>
               <div className="mt-4 grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-xl bg-secondary p-2"><p className="text-xs text-muted-foreground">Versato</p><p className="font-semibold text-sm">{money.format(netto)}</p></div>
                 <div className="rounded-xl bg-secondary p-2"><p className="text-xs text-muted-foreground">Valore</p><p className={`font-semibold text-sm ${valore>=netto?'text-green-600':'text-destructive'}`}>{money.format(valore)}</p></div>
                 <div className="rounded-xl bg-secondary p-2"><p className="text-xs text-muted-foreground">Rendim.</p><p className={`font-semibold text-sm ${rend>=0?'text-green-600':'text-destructive'}`}>{rend>=0?'+':''}{rendP.toFixed(1)}%</p></div>
               </div>
-              {movs.length>0&&<div className="mt-3 border-t pt-3">{movs.slice(0,3).map(m=><div key={m.id} className="flex justify-between py-1 text-xs text-muted-foreground"><span>{dateIt(m.data)} · {{versamento:'↓',prelievo:'↑',aggiornamento_valore:'📊'}[m.tipo]} {m.note||''}</span><span className={m.tipo==='prelievo'?'text-destructive':'text-green-600'}>{m.tipo==='prelievo'?'-':'+'}{money.format(m.importo)}</span></div>)}</div>}
-              {movInvId===a.id&&<form onSubmit={addMov} className="mt-3 grid gap-3 border-t pt-3 sm:grid-cols-2"><Field label="Tipo"><select value={tipoMov} onChange={e=>setTipoMov(e.target.value as AssetMovimento['tipo'])}><option value="versamento">Versamento</option><option value="prelievo">Prelievo</option><option value="aggiornamento_valore">Aggiorn. valore</option></select></Field><Field label="Data"><input name="data" type="date" required defaultValue={new Date().toISOString().slice(0,10)}/></Field><Field label="Importo (€)"><input name="importo" type="number" min=".01" step=".01" required/></Field><Field label="Note"><input name="note" placeholder="Facoltativo"/></Field><div className="col-span-full flex gap-2"><button type="submit" className="h-9 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">Salva</button><button type="button" onClick={()=>setMovInvId(null)} className="h-9 rounded-xl border px-4 text-sm">Annulla</button></div></form>}
+              {movs.length>0&&<div className="mt-3 border-t pt-3">{movs.slice(0,3).map(m=><div key={m.id} className="flex items-center gap-2 py-1 text-xs text-muted-foreground"><span className="min-w-0 flex-1">{dateIt(m.data)} · {{versamento:'↓',prelievo:'↑',aggiornamento_valore:'📊'}[m.tipo]} {m.note||''}</span><span className={m.tipo==='prelievo'?'text-destructive':'text-green-600'}>{m.tipo==='prelievo'?'-':'+'}{money.format(m.importo)}</span><EditButton onClick={()=>{setEditingMov({assetId:a.id,movimento:m});setMovInvId(a.id);setTipoMov(m.tipo)}} label="Modifica movimento patrimonio"/></div>)}</div>}
+              {movInvId===a.id&&<form key={editingMov?.movimento.id??`new-asset-movement-${a.id}`} onSubmit={addMov} className="mt-3 grid gap-3 border-t pt-3 sm:grid-cols-2"><Field label="Tipo"><select value={tipoMov} onChange={e=>setTipoMov(e.target.value as AssetMovimento['tipo'])}><option value="versamento">Versamento</option><option value="prelievo">Prelievo</option><option value="aggiornamento_valore">Aggiorn. valore</option></select></Field><Field label="Data"><input name="data" type="date" required defaultValue={editingMov?.movimento.data??new Date().toISOString().slice(0,10)}/></Field><Field label="Importo (€)"><input name="importo" type="number" min=".01" step=".01" required defaultValue={editingMov?.movimento.importo}/></Field><Field label="Note"><input name="note" placeholder="Facoltativo" defaultValue={editingMov?.movimento.note}/></Field><div className="col-span-full flex gap-2"><button type="submit" className="h-9 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">{editingMov?'Salva modifica':'Salva'}</button><button type="button" onClick={()=>{setMovInvId(null);setEditingMov(null)}} className="h-9 rounded-xl border px-4 text-sm">Annulla</button></div></form>}
             </Card>
           )
         })}
-        <button onClick={()=>setShowForm(v=>!v)} className="rounded-2xl border-2 border-dashed border-border hover:border-primary flex items-center justify-center gap-2 text-muted-foreground hover:text-primary p-5 min-h-[120px] transition-colors"><Plus className="size-5"/>Nuovo investimento</button>
+        <button onClick={()=>{setEditingAsset(null);setFreq('mensile');setShowForm(v=>!v)}} className="rounded-2xl border-2 border-dashed border-border hover:border-primary flex items-center justify-center gap-2 text-muted-foreground hover:text-primary p-5 min-h-[120px] transition-colors"><Plus className="size-5"/>Nuovo investimento</button>
       </div>
-      {showForm&&<form onSubmit={submitAsset} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3"><Field label="Nome"><input name="name" required placeholder="Es. ETF World..."/></Field><Field label="Categoria"><select name="type"><option value="finanziario">📈 Investimento finanziario</option><option value="assicurativo">🛡️ Assicurativo / Previdenziale</option><option value="risparmio">🏦 Risparmio vincolato</option></select></Field><Field label="Istituto"><input name="istituto" placeholder="Es. Fineco, Generali..."/></Field><Field label="Frequenza versamento"><FreqSelect value={freq} onChange={setFreq}/></Field><Field label="Importo versamento (€)"><input name="importoVers" type="number" step=".01" placeholder="0"/></Field><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">Aggiungi</button><button type="button" onClick={()=>setShowForm(false)} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
+      {showForm&&<form key={editingAsset?.id??'new-asset'} onSubmit={submitAsset} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editingAsset&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editingAsset.name}”</p>}<Field label="Nome"><input name="name" required placeholder="Es. ETF World..." defaultValue={editingAsset?.name}/></Field><Field label="Categoria"><select name="type" defaultValue={editingAsset?.type??'finanziario'}><option value="finanziario">📈 Investimento finanziario</option><option value="assicurativo">🛡️ Assicurativo / Previdenziale</option><option value="risparmio">🏦 Risparmio vincolato</option></select></Field><Field label="Istituto"><input name="istituto" placeholder="Es. Fineco, Generali..." defaultValue={editingAsset?.istituto}/></Field><Field label="Frequenza versamento"><FreqSelect value={freq} onChange={setFreq}/></Field><Field label="Importo versamento (€)"><input name="importoVers" type="number" step=".01" placeholder="0" defaultValue={editingAsset?.importoVers}/></Field><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editingAsset?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={()=>{setShowForm(false);setEditingAsset(null)}} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
     </div>
   )
 }
@@ -579,18 +606,20 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
 // ── FINANZIAMENTI ──
 function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
   const [showForm,setShowForm]=useState(false)
+  const [editing,setEditing]=useState<Financing|null>(null)
   const [category,setCategory]=useState<FinancingCategory>('auto')
   const [freq,setFreq]=useState<Freq>('mensile')
   const [interestMode,setInterestMode]=useState<InterestMode>('percentage')
   const [originalAmount,setOriginalAmount]=useState(0)
   const [interestRate,setInterestRate]=useState(0)
   const [totalRepayable,setTotalRepayable]=useState(0)
+  const [knownPayment,setKnownPayment]=useState(0)
   const [installmentCount,setInstallmentCount]=useState(36)
   const [startDate,setStartDate]=useState('')
   const residual=s.financings.reduce((total,item)=>total+Math.max(0,item.residualAmount),0)
   const monthly=s.financings.reduce((total,item)=>total+toMensile(item.paymentAmount,item.freq),0)
-  const calculatedTotal=interestMode==='total'?totalRepayable:originalAmount
-  const previewPayment=installmentAmount(originalAmount,interestMode,interestRate,calculatedTotal,installmentCount,freq)
+  const calculatedTotal=interestMode==='total'?totalRepayable:interestMode==='payment'?knownPayment*installmentCount:originalAmount
+  const previewPayment=installmentAmount(originalAmount,interestMode,interestRate,calculatedTotal,installmentCount,freq,knownPayment)
   const previewEndDate=installmentEndDate(startDate,freq,installmentCount)
   const previewProgress=installmentProgress(startDate,freq,installmentCount)
   const submit=(e:FormEvent<HTMLFormElement>)=>{
@@ -598,7 +627,7 @@ function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
     const f=new FormData(e.currentTarget)
     const residualRaw=String(f.get('residualAmount')??'')
     const financing:Financing={
-      id:uid(),
+      id:editing?.id??uid(),
       name:String(f.get('name')),
       category,
       kind:String(f.get('kind')) as Kind,
@@ -615,37 +644,40 @@ function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
       accountId:String(f.get('accountId')??'')||undefined
     }
     if(!financing.name||financing.originalAmount<=0||financing.paymentAmount<=0||!startDate||installmentCount<=0)return
-    set(x=>({...x,financings:[financing,...x.financings]}))
-    e.currentTarget.reset();setCategory('auto');setFreq('mensile');setInterestMode('percentage');setOriginalAmount(0);setInterestRate(0);setTotalRepayable(0);setInstallmentCount(36);setStartDate('');setShowForm(false)
+    set(x=>({...x,financings:editing?x.financings.map(item=>item.id===editing.id?financing:item):[financing,...x.financings]}))
+    e.currentTarget.reset();resetForm()
   }
+  const resetForm=()=>{setCategory('auto');setFreq('mensile');setInterestMode('percentage');setOriginalAmount(0);setInterestRate(0);setTotalRepayable(0);setKnownPayment(0);setInstallmentCount(36);setStartDate('');setEditing(null);setShowForm(false)}
+  const edit=(item:Financing)=>{setEditing(item);setCategory(item.category);setFreq(item.freq);setInterestMode(item.interestMode);setOriginalAmount(item.originalAmount);setInterestRate(item.interestRate);setTotalRepayable(item.totalRepayable);setKnownPayment(item.paymentAmount);setInstallmentCount(item.installmentCount);setStartDate(item.startDate);setShowForm(true)}
   return <div className="flex flex-col gap-6">
     <Heading kicker="DEBITI E RATE" title="Finanziamenti e mutui" text="Auto, casa, prestiti e leasing con residuo e impatto mensile."/>
     <div className="grid gap-4 sm:grid-cols-3"><Metric label="Debito residuo" value={residual}/><Metric label="Rate equivalenti/mese" value={monthly}/><Card><p className="text-sm text-muted-foreground">Posizioni attive</p><p className="mt-3 text-2xl font-semibold">{s.financings.length}</p></Card></div>
-    <button onClick={()=>setShowForm(value=>!value)} className="self-start flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi finanziamento</button>
-    {showForm&&<form onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
-      <Field label="Nome"><input name="name" required placeholder="Es. Auto, mutuo casa..."/></Field>
+    <button onClick={()=>{if(showForm)resetForm();else setShowForm(true)}} className="self-start flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi finanziamento</button>
+    {showForm&&<form key={editing?.id??'new-financing'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
+      {editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.name}”</p>}
+      <Field label="Nome"><input name="name" required placeholder="Es. Auto, mutuo casa..." defaultValue={editing?.name}/></Field>
       <Field label="Categoria"><select value={category} onChange={e=>setCategory(e.target.value as FinancingCategory)}>{(Object.keys(FINANCING_LABEL) as FinancingCategory[]).map(key=><option key={key} value={key}>{FINANCING_LABEL[key]}</option>)}</select></Field>
-      <Field label="Ambito"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
+      <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
       <Field label="Importo finanziato (€)"><input name="originalAmount" type="number" min=".01" step=".01" required value={originalAmount||''} onChange={e=>setOriginalAmount(Number(e.target.value))}/></Field>
-      <Field label="Debito residuo (€)"><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = importo iniziale"/></Field>
+      <Field label="Debito residuo (€)"><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = importo iniziale" defaultValue={editing?.residualAmount}/></Field>
       <Field label="Frequenza rate"><InstallmentFreqSelect value={freq} onChange={setFreq}/></Field>
-      <Field label="Calcolo interessi"><select value={interestMode} onChange={e=>setInterestMode(e.target.value as InterestMode)}><option value="percentage">Tasso annuo in %</option><option value="total">Totale complessivo in €</option></select></Field>
-      {interestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={interestRate||''} onChange={e=>setInterestRate(Number(e.target.value))} placeholder="Es. 6,50"/></Field>:<Field label="Totale da restituire (€)"><input type="number" min={originalAmount||.01} step=".01" required value={totalRepayable||''} onChange={e=>setTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>}
+      <Field label="Come conosci il piano"><select value={interestMode} onChange={e=>setInterestMode(e.target.value as InterestMode)}><option value="percentage">Conosco il tasso annuo %</option><option value="total">Conosco il totale da restituire</option><option value="payment">Conosco l’importo della rata</option></select></Field>
+      {interestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={interestRate||''} onChange={e=>setInterestRate(Number(e.target.value))} placeholder="Es. 6,50"/></Field>:interestMode==='total'?<Field label="Totale da restituire (€)"><input type="number" min={originalAmount||.01} step=".01" required value={totalRepayable||''} onChange={e=>setTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>:<Field label="Importo rata (€)"><input type="number" min=".01" step=".01" required value={knownPayment||''} onChange={e=>setKnownPayment(Number(e.target.value))} placeholder="Es. 300"/></Field>}
       <Field label="Numero totale di rate"><input type="number" min="1" max="1200" required value={installmentCount} onChange={e=>setInstallmentCount(Number(e.target.value))}/></Field>
-      <Field label="Conto di addebito"><select name="accountId"><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+      <Field label="Conto di addebito"><select name="accountId" defaultValue={editing?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
       <Field label="Data della prima rata"><input type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)}/></Field>
-      <div className="col-span-full grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">Rata calcolata</p><p className="font-semibold">{money.format(previewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Data ultima rata</p><p className="font-semibold">{previewEndDate?dateFullIt(previewEndDate):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti a oggi</p><p className="font-semibold">{previewProgress.remaining} di {installmentCount||0}</p></div></div>
-      <div className="col-span-full flex gap-3"><button className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">Salva</button><button type="button" onClick={()=>setShowForm(false)} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
+      <div className="col-span-full grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Rata {interestMode==='payment'?'indicata':'calcolata'}</p><p className="font-semibold">{money.format(previewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Totale rate</p><p className="font-semibold">{money.format(previewPayment*installmentCount)}</p></div><div><p className="text-xs text-muted-foreground">Data ultima rata</p><p className="font-semibold">{previewEndDate?dateFullIt(previewEndDate):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti a oggi</p><p className="font-semibold">{previewProgress.remaining} di {installmentCount||0}</p></div></div>
+      <div className="col-span-full flex gap-3"><button className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Salva'}</button><button type="button" onClick={resetForm} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
     </form>}
     <div className="grid gap-4 md:grid-cols-2">{s.financings.map(item=>{
       const plan=installmentProgress(item.startDate,item.freq,item.installmentCount)
       const progress=item.installmentCount>0?Math.min(100,plan.paid/item.installmentCount*100):0
       return <Card key={item.id}>
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{FINANCING_LABEL[item.category]} · {item.kind==='piva'?'P.IVA':'Personale'}</p><h3 className="mt-1 font-semibold">{item.name}</h3></div><button onClick={()=>set(x=>({...x,financings:x.financings.filter(value=>value.id!==item.id)}))} aria-label="Elimina finanziamento"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{FINANCING_LABEL[item.category]} · {item.kind==='piva'?'P.IVA':'Personale'}</p><h3 className="mt-1 font-semibold">{item.name}</h3></div><div className="flex gap-2"><EditButton onClick={()=>edit(item)} label="Modifica finanziamento"/><button onClick={()=>set(x=>({...x,financings:x.financings.filter(value=>value.id!==item.id)}))} aria-label="Elimina finanziamento"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></div>
         <div className="mt-4 grid grid-cols-2 gap-3"><div><label className="text-xs text-muted-foreground" htmlFor={`residual-${item.id}`}>Residuo aggiornabile</label><input id={`residual-${item.id}`} className="mt-1 h-9 w-full rounded-xl border bg-background px-3 text-sm font-semibold" type="number" min="0" step=".01" value={item.residualAmount} onChange={e=>set(x=>({...x,financings:x.financings.map(value=>value.id===item.id?{...value,residualAmount:Number(e.target.value)}:value)}))}/></div><div><p className="text-xs text-muted-foreground">Rata</p><p className="mt-2 text-xl font-semibold">{money.format(item.paymentAmount)} <span className="text-xs font-normal text-muted-foreground">{FREQ_LABEL[item.freq].toLowerCase()}</span></p></div></div>
         <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-secondary/60 p-3 text-center"><div><p className="text-[10px] text-muted-foreground">RATE TOTALI</p><p className="font-semibold">{item.installmentCount||'—'}</p></div><div><p className="text-[10px] text-muted-foreground">TRASCORSE</p><p className="font-semibold">{plan.paid}</p></div><div><p className="text-[10px] text-muted-foreground">MANCANTI</p><p className="font-semibold text-primary">{plan.remaining}</p></div></div>
         <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div>
-        <p className="mt-2 text-xs text-muted-foreground">{item.startDate?`Dal ${dateFullIt(item.startDate)}`:'Data iniziale non indicata'}{plan.endDate?` al ${dateFullIt(plan.endDate)}`:''} · {item.interestMode==='total'?`Totale da restituire ${money.format(item.totalRepayable)}`:`Tasso annuo ${item.interestRate}%`}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{item.startDate?`Dal ${dateFullIt(item.startDate)}`:'Data iniziale non indicata'}{plan.endDate?` al ${dateFullIt(plan.endDate)}`:''} · {item.interestMode==='total'?`Totale da restituire ${money.format(item.totalRepayable)}`:item.interestMode==='payment'?`Rata nota ${money.format(item.paymentAmount)} · Totale rate ${money.format(item.paymentAmount*item.installmentCount)}`:`Tasso annuo ${item.interestRate}%`}</p>
         {plan.nextDate&&<p className="mt-1 text-xs font-medium text-primary">Prossima rata prevista: {dateFullIt(plan.nextDate)}</p>}
         {item.installmentCount>0&&plan.remaining===0&&<p className="mt-1 text-xs font-semibold text-green-600">Piano rateale concluso</p>}
       </Card>
@@ -670,23 +702,26 @@ function Piva({s,year}:{s:BudgetState;year:number}) {
 function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
   const [showForm,setShowForm]=useState(false)
   const [freq,setFreq]=useState<Freq>('unica')
+  const [editing,setEditing]=useState<Deadline|null>(null)
   const submit=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const f=new FormData(e.currentTarget)
-    set(x=>({...x,deadlines:[...x.deadlines,{id:uid(),title:String(f.get('title')),date:String(f.get('date')),amount:Number(f.get('amount')),paid:false,priority:String(f.get('priority')) as Deadline['priority'],freq}]}))
-    e.currentTarget.reset();setShowForm(false)
+    const deadline:Deadline={id:editing?.id??uid(),title:String(f.get('title')),date:String(f.get('date')),amount:Number(f.get('amount')),paid:editing?.paid??false,priority:String(f.get('priority')) as Deadline['priority'],freq}
+    set(x=>({...x,deadlines:editing?x.deadlines.map(item=>item.id===editing.id?deadline:item):[...x.deadlines,deadline]}))
+    e.currentTarget.reset();setShowForm(false);setEditing(null);setFreq('unica')
   }
   return (
     <div className="flex flex-col gap-6">
       <Heading kicker="CALENDARIO" title="Scadenze" text="Obblighi fiscali e pagamenti futuri."/>
-      <button onClick={()=>setShowForm(v=>!v)} className="self-start flex items-center gap-2 rounded-xl bg-primary px-4 h-10 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi scadenza</button>
-      {showForm&&<form onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3"><Field label="Descrizione"><input name="title" required placeholder="Es. Assicurazione auto"/></Field><Field label="Data"><input name="date" type="date" required/></Field><Field label="Importo (€)"><input name="amount" type="number" step=".01" required/></Field><Field label="Priorità"><select name="priority"><option value="alta">Alta</option><option value="media">Media</option><option value="bassa">Bassa</option></select></Field><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">Aggiungi</button><button type="button" onClick={()=>setShowForm(false)} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
+      <button onClick={()=>{setEditing(null);setFreq('unica');setShowForm(v=>!v)}} className="self-start flex items-center gap-2 rounded-xl bg-primary px-4 h-10 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi scadenza</button>
+      {showForm&&<form key={editing?.id??'new-deadline'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.title}”</p>}<Field label="Descrizione"><input name="title" required placeholder="Es. Assicurazione auto" defaultValue={editing?.title}/></Field><Field label="Data"><input name="date" type="date" required defaultValue={editing?.date}/></Field><Field label="Importo (€)"><input name="amount" type="number" step=".01" required defaultValue={editing?.amount}/></Field><Field label="Priorità"><select name="priority" defaultValue={editing?.priority??'alta'}><option value="alta">Alta</option><option value="media">Media</option><option value="bassa">Bassa</option></select></Field><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={()=>{setShowForm(false);setEditing(null)}} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
       {s.deadlines.sort((a,b)=>a.date.localeCompare(b.date)).map(d=>(
         <Card key={d.id}>
           <div className="flex flex-wrap items-center gap-4">
             <button onClick={()=>set(x=>({...x,deadlines:x.deadlines.map(v=>v.id===d.id?{...v,paid:!v.paid}:v)}))} className={`rounded-full px-3 py-1 text-xs font-semibold ${d.paid?'bg-secondary':'bg-primary text-primary-foreground'}`}>{d.paid?'Pagata':'Da pagare'}</button>
             <div className="flex-1"><h3 className={d.paid?'line-through opacity-60 font-semibold':'font-semibold'}>{d.title}</h3><p className="text-sm text-muted-foreground">{dateIt(d.date)} · Priorità {d.priority}{d.freq&&d.freq!=='unica'?` · ${FREQ_LABEL[d.freq]}`:''}</p></div>
             <b>{money.format(d.amount)}</b>
+            <EditButton onClick={()=>{setEditing(d);setFreq(d.freq??'unica');setShowForm(true)}} label="Modifica scadenza"/>
             <button onClick={()=>set(x=>({...x,deadlines:x.deadlines.filter(v=>v.id!==d.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button>
           </div>
         </Card>
@@ -706,13 +741,15 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   const [simDownPayment,setSimDownPayment]=useState(0)
   const [simInterestRate,setSimInterestRate]=useState(0)
   const [simTotalRepayable,setSimTotalRepayable]=useState(0)
+  const [simKnownPayment,setSimKnownPayment]=useState(0)
   const [simInstallmentCount,setSimInstallmentCount]=useState(36)
   const [simStartDate,setSimStartDate]=useState('')
   const [selectedId,setSelectedId]=useState(s.simulations[0]?.id??'')
+  const [editing,setEditing]=useState<Simulation|null>(null)
   const isLoan=simType==='mutuo'||simType==='finanziamento'
   const simulatedPrincipal=Math.max(0,simAmount-simDownPayment)
-  const simCalculatedTotal=simInterestMode==='total'?simTotalRepayable:simulatedPrincipal
-  const simPreviewPayment=isLoan?installmentAmount(simulatedPrincipal,simInterestMode,simInterestRate,simCalculatedTotal,simInstallmentCount,freq):0
+  const simCalculatedTotal=simInterestMode==='total'?simTotalRepayable:simInterestMode==='payment'?simKnownPayment*simInstallmentCount:simulatedPrincipal
+  const simPreviewPayment=isLoan?installmentAmount(simulatedPrincipal,simInterestMode,simInterestRate,simCalculatedTotal,simInstallmentCount,freq,simKnownPayment):0
   const simPreviewEnd=isLoan?installmentEndDate(simStartDate,freq,simInstallmentCount):''
   const simPreviewProgress=isLoan?installmentProgress(simStartDate,freq,simInstallmentCount):null
   useEffect(()=>{
@@ -724,19 +761,22 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
     e.preventDefault()
     const form=new FormData(e.currentTarget)
     const simulation:Simulation={
-      id:uid(),name:String(form.get('name')),type:simType,
+      id:editing?.id??uid(),name:String(form.get('name')),type:simType,
       amount:simAmount,downPayment:isLoan?simDownPayment:0,
       interestMode:isLoan?simInterestMode:'percentage',
       interestRate:isLoan&&simInterestMode==='percentage'?simInterestRate:0,
       totalRepayable:isLoan?(simInterestMode==='total'?simTotalRepayable:simPreviewPayment*simInstallmentCount):0,
+      paymentAmount:isLoan?simPreviewPayment:0,
       installmentCount:isLoan?simInstallmentCount:0,
       freq,startDate:simStartDate||undefined,
       kind:String(form.get('kind')) as Kind
     }
     if(!simulation.name||simulation.amount<=0||(isLoan&&(!simStartDate||simInstallmentCount<=0||simPreviewPayment<=0)))return
-    set(value=>({...value,simulations:[simulation,...value.simulations]}));setSelectedId(simulation.id)
-    e.currentTarget.reset();setSimType('mutuo');setFreq('mensile');setSimInterestMode('percentage');setSimAmount(0);setSimDownPayment(0);setSimInterestRate(0);setSimTotalRepayable(0);setSimInstallmentCount(36);setSimStartDate('')
+    set(value=>({...value,simulations:editing?value.simulations.map(item=>item.id===editing.id?simulation:item):[simulation,...value.simulations]}));setSelectedId(simulation.id)
+    e.currentTarget.reset();resetSimulationForm()
   }
+  const resetSimulationForm=()=>{setEditing(null);setSimType('mutuo');setFreq('mensile');setSimInterestMode('percentage');setSimAmount(0);setSimDownPayment(0);setSimInterestRate(0);setSimTotalRepayable(0);setSimKnownPayment(0);setSimInstallmentCount(36);setSimStartDate('')}
+  const editSimulation=(item:Simulation)=>{setEditing(item);setSimType(item.type);setFreq(item.freq);setSimInterestMode(item.interestMode);setSimAmount(item.amount);setSimDownPayment(item.downPayment);setSimInterestRate(item.interestRate);setSimTotalRepayable(item.totalRepayable);setSimKnownPayment(item.paymentAmount);setSimInstallmentCount(item.installmentCount);setSimStartDate(item.startDate??'')}
   const selected=s.simulations.find(item=>item.id===selectedId)
   const recurringIncome=s.incomes.filter(item=>item.recurring&&(!item.date||item.date<=data)).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
   const recurringPiva=s.incomes.filter(item=>item.kind==='piva'&&item.recurring&&(!item.date||item.date<=data)).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
@@ -750,7 +790,7 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   if(selected){
     if(selected.type==='mutuo'||selected.type==='finanziamento'){
       upfrontImpact=selected.downPayment
-      scenarioPayment=installmentAmount(Math.max(0,selected.amount-selected.downPayment),selected.interestMode,selected.interestRate,selected.totalRepayable,selected.installmentCount,selected.freq)
+      scenarioPayment=installmentAmount(Math.max(0,selected.amount-selected.downPayment),selected.interestMode,selected.interestRate,selected.totalRepayable,selected.installmentCount,selected.freq,selected.paymentAmount)
       monthlyImpact=-toMensile(scenarioPayment,selected.freq)
       selectedPlan=installmentProgress(selected.startDate??'',selected.freq,selected.installmentCount,data)
     }else if(selected.freq==='unica'){
@@ -767,26 +807,27 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   return <div className="flex flex-col gap-6">
     <Heading kicker="SCENARI" title="Previsioni future" text="Salva più ipotesi, scegli quale simulare e vedi subito quanto resta o quanto manca."/>
     <Card><div className="flex flex-wrap items-end gap-3"><Field label="Data della simulazione"><input type="date" value={data} onChange={e=>setData(e.target.value)}/></Field><div className="flex gap-2 pb-0.5">{[[1,'+1m'],[3,'+3m'],[6,'+6m'],[12,'+1a']].map(([months,label])=><button key={label} onClick={()=>addMesi(Number(months))} className="h-10 rounded-xl border px-3 text-sm hover:bg-secondary">{label}</button>)}</div>{s.simulations.length>0&&<Field label="Scenario da simulare"><select value={selectedId} onChange={e=>setSelectedId(e.target.value)}>{s.simulations.map(item=><option key={item.id} value={item.id}>{item.name} · {SIMULATION_LABEL[item.type]}</option>)}</select></Field>}</div></Card>
-    <form onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
-      <Field label="Nome scenario"><input name="name" required placeholder="Es. Mutuo casa 25 anni"/></Field>
+    <form key={editing?.id??'new-simulation'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
+      {editing&&<div className="col-span-full flex items-center justify-between rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary"><span>Modifica scenario “{editing.name}”</span><button type="button" onClick={resetSimulationForm} className="text-xs">Annulla modifica</button></div>}
+      <Field label="Nome scenario"><input name="name" required placeholder="Es. Mutuo casa 25 anni" defaultValue={editing?.name}/></Field>
       <Field label="Cosa vuoi simulare"><select value={simType} onChange={e=>setSimType(e.target.value as SimulationType)}>{(Object.keys(SIMULATION_LABEL) as SimulationType[]).map(type=><option key={type} value={type}>{SIMULATION_LABEL[type]}</option>)}</select></Field>
-      <Field label="Ambito"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
+      <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
       <Field label={isLoan?'Costo del bene/progetto (€)':'Importo (€)'}><input type="number" min=".01" step=".01" required value={simAmount||''} onChange={e=>setSimAmount(Number(e.target.value))}/></Field>
       {isLoan?<>
         <Field label="Anticipo (€)"><input type="number" min="0" step=".01" value={simDownPayment||''} onChange={e=>setSimDownPayment(Number(e.target.value))}/></Field>
         <Field label="Frequenza rate"><InstallmentFreqSelect value={freq} onChange={setFreq}/></Field>
-        <Field label="Calcolo interessi"><select value={simInterestMode} onChange={e=>setSimInterestMode(e.target.value as InterestMode)}><option value="percentage">Tasso annuo in %</option><option value="total">Totale complessivo in €</option></select></Field>
-        {simInterestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={simInterestRate||''} onChange={e=>setSimInterestRate(Number(e.target.value))}/></Field>:<Field label="Totale da restituire (€)"><input type="number" min={simulatedPrincipal||.01} step=".01" required value={simTotalRepayable||''} onChange={e=>setSimTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>}
+        <Field label="Come conosci il piano"><select value={simInterestMode} onChange={e=>setSimInterestMode(e.target.value as InterestMode)}><option value="percentage">Conosco il tasso annuo %</option><option value="total">Conosco il totale da restituire</option><option value="payment">Conosco l’importo della rata</option></select></Field>
+        {simInterestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={simInterestRate||''} onChange={e=>setSimInterestRate(Number(e.target.value))}/></Field>:simInterestMode==='total'?<Field label="Totale da restituire (€)"><input type="number" min={simulatedPrincipal||.01} step=".01" required value={simTotalRepayable||''} onChange={e=>setSimTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>:<Field label="Importo rata (€)"><input type="number" min=".01" step=".01" required value={simKnownPayment||''} onChange={e=>setSimKnownPayment(Number(e.target.value))} placeholder="Es. 300"/></Field>}
         <Field label="Numero totale di rate"><input type="number" min="1" max="1200" required value={simInstallmentCount} onChange={e=>setSimInstallmentCount(Number(e.target.value))}/></Field>
         <Field label="Data della prima rata"><input type="date" required value={simStartDate} onChange={e=>setSimStartDate(e.target.value)}/></Field>
-        <div className="col-span-full grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">Rata stimata</p><p className="font-semibold">{money.format(simPreviewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Data ultima rata</p><p className="font-semibold">{simPreviewEnd?dateFullIt(simPreviewEnd):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti a oggi</p><p className="font-semibold">{simPreviewProgress?.remaining??0} di {simInstallmentCount||0}</p></div></div>
+        <div className="col-span-full grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Rata {simInterestMode==='payment'?'indicata':'stimata'}</p><p className="font-semibold">{money.format(simPreviewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Totale rate</p><p className="font-semibold">{money.format(simPreviewPayment*simInstallmentCount)}</p></div><div><p className="text-xs text-muted-foreground">Data ultima rata</p><p className="font-semibold">{simPreviewEnd?dateFullIt(simPreviewEnd):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti a oggi</p><p className="font-semibold">{simPreviewProgress?.remaining??0} di {simInstallmentCount||0}</p></div></div>
       </>:<><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><Field label="Data inizio (facoltativa)"><input type="date" value={simStartDate} onChange={e=>setSimStartDate(e.target.value)}/></Field></>}
-      <button className="self-end h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground md:col-span-1"><Plus className="mr-2 inline size-4"/>Salva scenario</button>
+      <button className="self-end h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground md:col-span-1">{editing?<Pencil className="mr-2 inline size-4"/>:<Plus className="mr-2 inline size-4"/>}{editing?'Salva modifiche':'Salva scenario'}</button>
     </form>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Margine mensile attuale" value={baseMonthly} warn={baseMonthly<0}/><Metric label="Impatto scenario/mese" value={monthlyImpact}/><Metric label={projectedMonthly>=0?'Residuo mensile':'Mancanza mensile'} value={Math.abs(projectedMonthly)} warn={projectedMonthly<0}/><Metric label="Liquidità dopo anticipo" value={projectedLiquidity} warn={projectedLiquidity<0}/></div>
-    {selected&&<Card className={projectedMonthly<0||projectedLiquidity<0?'border-destructive/40 bg-destructive/5':'border-green-500/30 bg-green-50/50 dark:bg-green-950/20'}><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{SIMULATION_LABEL[selected.type]}</p><h3 className="mt-1 text-xl font-semibold">{selected.name}</h3><p className="mt-2 text-sm text-muted-foreground">Importo {money.format(selected.amount)}{selected.downPayment>0?` · Anticipo ${money.format(selected.downPayment)}`:''}{scenarioPayment>0?` · Rata stimata ${money.format(scenarioPayment)} ${FREQ_LABEL[selected.freq].toLowerCase()}`:''}</p></div><div className={`rounded-xl px-4 py-2 text-sm font-semibold ${projectedMonthly>=0&&projectedLiquidity>=0?'bg-green-600 text-white':'bg-destructive text-destructive-foreground'}`}>{projectedMonthly>=0&&projectedLiquidity>=0?'Sostenibile con i dati inseriti':`Mancano ${money.format(Math.max(0,-projectedMonthly))}/mese`}</div></div>{selectedPlan&&<div className="mt-4 grid gap-3 rounded-xl bg-background/70 p-4 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Prima rata</p><p className="font-semibold">{selected.startDate?dateFullIt(selected.startDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Ultima rata</p><p className="font-semibold">{selectedPlan.endDate?dateFullIt(selectedPlan.endDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Rate trascorse</p><p className="font-semibold">{selectedPlan.paid}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti</p><p className="font-semibold text-primary">{selectedPlan.remaining} di {selected.installmentCount}</p></div></div>}<p className="mt-4 text-xs text-muted-foreground">{selected.type==='mutuo'||selected.type==='finanziamento'?(selected.interestMode==='total'?`Calcolo sul totale da restituire di ${money.format(selected.totalRepayable)}.`:`Calcolo con tasso annuo del ${selected.interestRate}%. `):''} Stima indicativa: non include spese bancarie, assicurazioni, variazioni dei tassi o costi non registrati.</p></Card>}
+    {selected&&<Card className={projectedMonthly<0||projectedLiquidity<0?'border-destructive/40 bg-destructive/5':'border-green-500/30 bg-green-50/50 dark:bg-green-950/20'}><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{SIMULATION_LABEL[selected.type]}</p><h3 className="mt-1 text-xl font-semibold">{selected.name}</h3><p className="mt-2 text-sm text-muted-foreground">Importo {money.format(selected.amount)}{selected.downPayment>0?` · Anticipo ${money.format(selected.downPayment)}`:''}{scenarioPayment>0?` · Rata ${selected.interestMode==='payment'?'indicata':'stimata'} ${money.format(scenarioPayment)} ${FREQ_LABEL[selected.freq].toLowerCase()}`:''}</p></div><div className={`rounded-xl px-4 py-2 text-sm font-semibold ${projectedMonthly>=0&&projectedLiquidity>=0?'bg-green-600 text-white':'bg-destructive text-destructive-foreground'}`}>{projectedMonthly>=0&&projectedLiquidity>=0?'Sostenibile con i dati inseriti':`Mancano ${money.format(Math.max(0,-projectedMonthly))}/mese`}</div></div>{selectedPlan&&<div className="mt-4 grid gap-3 rounded-xl bg-background/70 p-4 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Prima rata</p><p className="font-semibold">{selected.startDate?dateFullIt(selected.startDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Ultima rata</p><p className="font-semibold">{selectedPlan.endDate?dateFullIt(selectedPlan.endDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Rate trascorse</p><p className="font-semibold">{selectedPlan.paid}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti</p><p className="font-semibold text-primary">{selectedPlan.remaining} di {selected.installmentCount}</p></div></div>}<p className="mt-4 text-xs text-muted-foreground">{selected.type==='mutuo'||selected.type==='finanziamento'?(selected.interestMode==='total'?`Calcolo sul totale da restituire di ${money.format(selected.totalRepayable)}.`:selected.interestMode==='payment'?`Calcolo sulla rata indicata di ${money.format(selected.paymentAmount)} per ${selected.installmentCount} rate.`:`Calcolo con tasso annuo del ${selected.interestRate}%. `):''} Stima indicativa: non include spese bancarie, assicurazioni, variazioni dei tassi o costi non registrati.</p></Card>}
     {expiredSubscriptions.length>0&&<Card><h3 className="font-semibold">Abbonamenti conclusi entro la data scelta</h3><p className="mt-1 text-sm text-muted-foreground">Liberano {money.format(releasedMonthly)} al mese.</p><div className="mt-3">{expiredSubscriptions.map(item=><div key={item.id} className="flex justify-between border-t py-2 text-sm"><span>{item.description}</span><span className="text-green-600">+{money.format(toMensile(item.amount,item.freq))}/mese</span></div>)}</div></Card>}
-    <section><h3 className="mb-3 font-semibold">Scenari salvati</h3><div className="grid gap-3 md:grid-cols-2">{s.simulations.map(item=><Card key={item.id} className={item.id===selectedId?'border-primary':''}><div className="flex items-start justify-between gap-3"><button onClick={()=>setSelectedId(item.id)} className="min-w-0 flex-1 text-left"><p className="text-xs font-semibold text-primary">{SIMULATION_LABEL[item.type]}</p><p className="font-semibold">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{money.format(item.amount)} · {item.kind==='piva'?'P.IVA':'Personale'}</p></button><button onClick={()=>set(value=>({...value,simulations:value.simulations.filter(scenario=>scenario.id!==item.id)}))} aria-label="Elimina scenario"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></Card>)}{!s.simulations.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Salva il primo scenario per iniziare il confronto.</p></Card>}</div></section>
+    <section><h3 className="mb-3 font-semibold">Scenari salvati</h3><div className="grid gap-3 md:grid-cols-2">{s.simulations.map(item=><Card key={item.id} className={item.id===selectedId?'border-primary':''}><div className="flex items-start justify-between gap-3"><button onClick={()=>setSelectedId(item.id)} className="min-w-0 flex-1 text-left"><p className="text-xs font-semibold text-primary">{SIMULATION_LABEL[item.type]}</p><p className="font-semibold">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{money.format(item.amount)} · {item.kind==='piva'?'P.IVA':'Personale'}</p></button><EditButton onClick={()=>editSimulation(item)} label="Modifica scenario"/><button onClick={()=>set(value=>({...value,simulations:value.simulations.filter(scenario=>scenario.id!==item.id)}))} aria-label="Elimina scenario"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></Card>)}{!s.simulations.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Salva il primo scenario per iniziare il confronto.</p></Card>}</div></section>
   </div>
 }
 
@@ -794,6 +835,9 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
 function Setup({s,set,onSave,saveMsg,saving,logout}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;onSave:()=>void;saveMsg:string;saving:boolean;logout:()=>void}) {
   const update=(k:keyof BudgetState['profile'],v:string)=>set(x=>({...x,profile:{...x.profile,[k]:k==='name'||k==='ateco'?v:Number(v)}}))
   const [newCat,setNewCat]=useState('')
+  const [editingCategoryId,setEditingCategoryId]=useState<string|null>(null)
+  const [categoryDraft,setCategoryDraft]=useState('')
+  const saveCategoryName=(id:string)=>{const next=categoryDraft.trim();if(!next)return;set(value=>{const current=value.categories.find(item=>item.id===id);if(!current)return value;return{...value,categories:value.categories.map(item=>item.id===id?{...item,name:next}:item),expenses:value.expenses.map(item=>item.category===current.name?{...item,category:next}:item)}});setEditingCategoryId(null);setCategoryDraft('')}
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <Heading kicker="CONFIGURAZIONE" title="Impostazioni" text="Profilo fiscale, limiti e categorie."/>
@@ -815,7 +859,7 @@ function Setup({s,set,onSave,saveMsg,saving,logout}:{s:BudgetState;set:React.Dis
       </Card>
       <Card>
         <h3 className="font-semibold mb-4">Categorie di spesa</h3>
-        <div className="flex flex-wrap gap-2 mb-4">{s.categories.map(c=><span key={c.id} className="flex items-center gap-1 rounded-full border bg-secondary px-3 py-1 text-sm">{c.name}<button onClick={()=>set(x=>({...x,categories:x.categories.filter(v=>v.id!==c.id)}))} className="text-muted-foreground hover:text-destructive ml-1">×</button></span>)}</div>
+        <div className="flex flex-wrap gap-2 mb-4">{s.categories.map(c=>editingCategoryId===c.id?<span key={c.id} className="flex items-center gap-1 rounded-xl border bg-secondary p-1 text-sm"><input autoFocus className="h-8 rounded-lg border bg-background px-2" value={categoryDraft} onChange={e=>setCategoryDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')saveCategoryName(c.id);if(e.key==='Escape')setEditingCategoryId(null)}}/><button onClick={()=>saveCategoryName(c.id)} className="px-2 font-semibold text-primary">Salva</button><button onClick={()=>setEditingCategoryId(null)} className="px-1 text-muted-foreground">×</button></span>:<span key={c.id} className="flex items-center gap-1 rounded-full border bg-secondary px-3 py-1 text-sm">{c.name}<EditButton onClick={()=>{setEditingCategoryId(c.id);setCategoryDraft(c.name)}} label="Modifica categoria"/><button onClick={()=>set(x=>({...x,categories:x.categories.filter(v=>v.id!==c.id)}))} className="text-muted-foreground hover:text-destructive ml-1">×</button></span>)}</div>
         <div className="flex gap-2"><input className="flex-1 h-10 rounded-xl border bg-background px-3 text-sm" placeholder="Nuova categoria..." value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&newCat){set(x=>({...x,categories:[...x.categories,{id:uid(),name:newCat,budget:0}]}));setNewCat('')}}}/><button onClick={()=>{if(newCat){set(x=>({...x,categories:[...x.categories,{id:uid(),name:newCat,budget:0}]}));setNewCat('')}}} className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">+</button></div>
       </Card>
       <div className="flex flex-wrap gap-3">
