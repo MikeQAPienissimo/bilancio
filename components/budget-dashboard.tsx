@@ -3,7 +3,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ArrowDownLeft, BadgeEuro, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
-import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, Simulation, SimulationType, createEmptyState, dateFullIt, dateIt, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
+import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, Simulation, SimulationType, createEmptyState, dateFullIt, dateIt, installmentAmount, installmentEndDate, installmentProgress, installmentSchedule, isActiveAt, migrate, money, monthlyData, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -268,7 +268,7 @@ DATI FINANZIARI (${year}):
           {view==='conti' && <Accounts s={state} set={setState}/>}
           {view==='budget' && <Budgets s={state} set={setState} year={year}/>}
           {view==='patrimonio' && <Assets s={state} set={setState}/>}
-          {view==='finanziamenti' && <Financings s={state} set={setState}/>}
+          {view==='finanziamenti' && <Financings s={state} set={setState} onOpenDeadlines={()=>setView('scadenze')}/>}
           {view==='piva' && <Piva s={state} year={year}/>}
           {view==='scadenze' && <Deadlines s={state} set={setState}/>}
           {view==='previsioni' && <Previsioni s={state} set={setState}/>}
@@ -604,12 +604,12 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
 }
 
 // ── FINANZIAMENTI ──
-function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+function Financings({s,set,onOpenDeadlines}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;onOpenDeadlines:()=>void}) {
   const [showForm,setShowForm]=useState(false)
   const [editing,setEditing]=useState<Financing|null>(null)
   const [category,setCategory]=useState<FinancingCategory>('auto')
   const [freq,setFreq]=useState<Freq>('mensile')
-  const [interestMode,setInterestMode]=useState<InterestMode>('percentage')
+  const [interestMode,setInterestMode]=useState<InterestMode>('payment')
   const [originalAmount,setOriginalAmount]=useState(0)
   const [interestRate,setInterestRate]=useState(0)
   const [totalRepayable,setTotalRepayable]=useState(0)
@@ -647,41 +647,50 @@ function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
     set(x=>({...x,financings:editing?x.financings.map(item=>item.id===editing.id?financing:item):[financing,...x.financings]}))
     e.currentTarget.reset();resetForm()
   }
-  const resetForm=()=>{setCategory('auto');setFreq('mensile');setInterestMode('percentage');setOriginalAmount(0);setInterestRate(0);setTotalRepayable(0);setKnownPayment(0);setInstallmentCount(36);setStartDate('');setEditing(null);setShowForm(false)}
+  const resetForm=()=>{setCategory('auto');setFreq('mensile');setInterestMode('payment');setOriginalAmount(0);setInterestRate(0);setTotalRepayable(0);setKnownPayment(0);setInstallmentCount(36);setStartDate('');setEditing(null);setShowForm(false)}
   const edit=(item:Financing)=>{setEditing(item);setCategory(item.category);setFreq(item.freq);setInterestMode(item.interestMode);setOriginalAmount(item.originalAmount);setInterestRate(item.interestRate);setTotalRepayable(item.totalRepayable);setKnownPayment(item.paymentAmount);setInstallmentCount(item.installmentCount);setStartDate(item.startDate);setShowForm(true)}
   return <div className="flex flex-col gap-6">
-    <Heading kicker="DEBITI E RATE" title="Finanziamenti e mutui" text="Auto, casa, prestiti e leasing con residuo e impatto mensile."/>
-    <div className="grid gap-4 sm:grid-cols-3"><Metric label="Debito residuo" value={residual}/><Metric label="Rate equivalenti/mese" value={monthly}/><Card><p className="text-sm text-muted-foreground">Posizioni attive</p><p className="mt-3 text-2xl font-semibold">{s.financings.length}</p></Card></div>
-    <button onClick={()=>{if(showForm)resetForm();else setShowForm(true)}} className="self-start flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi finanziamento</button>
-    {showForm&&<form key={editing?.id??'new-financing'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
-      {editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.name}”</p>}
-      <Field label="Nome"><input name="name" required placeholder="Es. Auto, mutuo casa..." defaultValue={editing?.name}/></Field>
-      <Field label="Categoria"><select value={category} onChange={e=>setCategory(e.target.value as FinancingCategory)}>{(Object.keys(FINANCING_LABEL) as FinancingCategory[]).map(key=><option key={key} value={key}>{FINANCING_LABEL[key]}</option>)}</select></Field>
-      <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
-      <Field label="Importo finanziato (€)"><input name="originalAmount" type="number" min=".01" step=".01" required value={originalAmount||''} onChange={e=>setOriginalAmount(Number(e.target.value))}/></Field>
-      <Field label="Debito residuo (€)"><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = importo iniziale" defaultValue={editing?.residualAmount}/></Field>
-      <Field label="Frequenza rate"><InstallmentFreqSelect value={freq} onChange={setFreq}/></Field>
-      <Field label="Come conosci il piano"><select value={interestMode} onChange={e=>setInterestMode(e.target.value as InterestMode)}><option value="percentage">Conosco il tasso annuo %</option><option value="total">Conosco il totale da restituire</option><option value="payment">Conosco l’importo della rata</option></select></Field>
-      {interestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={interestRate||''} onChange={e=>setInterestRate(Number(e.target.value))} placeholder="Es. 6,50"/></Field>:interestMode==='total'?<Field label="Totale da restituire (€)"><input type="number" min={originalAmount||.01} step=".01" required value={totalRepayable||''} onChange={e=>setTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>:<Field label="Importo rata (€)"><input type="number" min=".01" step=".01" required value={knownPayment||''} onChange={e=>setKnownPayment(Number(e.target.value))} placeholder="Es. 300"/></Field>}
-      <Field label="Numero totale di rate"><input type="number" min="1" max="1200" required value={installmentCount} onChange={e=>setInstallmentCount(Number(e.target.value))}/></Field>
-      <Field label="Conto di addebito"><select name="accountId" defaultValue={editing?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
-      <Field label="Data della prima rata"><input type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)}/></Field>
-      <div className="col-span-full grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Rata {interestMode==='payment'?'indicata':'calcolata'}</p><p className="font-semibold">{money.format(previewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Totale rate</p><p className="font-semibold">{money.format(previewPayment*installmentCount)}</p></div><div><p className="text-xs text-muted-foreground">Data ultima rata</p><p className="font-semibold">{previewEndDate?dateFullIt(previewEndDate):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti a oggi</p><p className="font-semibold">{previewProgress.remaining} di {installmentCount||0}</p></div></div>
-      <div className="col-span-full flex gap-3"><button className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Salva'}</button><button type="button" onClick={resetForm} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <Heading kicker="DEBITI E RATE" title="Finanziamenti e mutui" text="Piani rateali ordinati, con prossima rata e calendario automatico nelle Scadenze."/>
+      <div className="flex flex-wrap gap-2"><button onClick={onOpenDeadlines} className="flex h-10 items-center gap-2 rounded-xl border bg-card px-4 text-sm font-semibold hover:bg-secondary"><CalendarDays className="size-4"/>Calendario rate</button><button onClick={()=>{if(showForm)resetForm();else setShowForm(true)}} className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi finanziamento</button></div>
+    </div>
+    <div className="grid gap-4 sm:grid-cols-3"><Metric label="Debito residuo" value={residual}/><Metric label="Impegno mensile" value={monthly}/><Card><p className="text-sm text-muted-foreground">Piani registrati</p><p className="mt-3 text-2xl font-semibold">{s.financings.length}</p><p className="mt-1 text-xs text-muted-foreground">Le rate alimentano automaticamente le Scadenze</p></Card></div>
+    {showForm&&<form key={editing?.id??'new-financing'} onSubmit={submit} className="flex flex-col gap-5 rounded-2xl border bg-card p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{editing?'Modifica piano':'Nuovo piano'}</p><h3 className="mt-1 text-lg font-semibold">{editing?editing.name:'Inserisci i dati del finanziamento'}</h3></div><button type="button" onClick={resetForm} className="rounded-lg border px-3 py-1.5 text-xs hover:bg-secondary">Chiudi</button></div>
+      <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">1. Informazioni principali</h4><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Field label="Nome"><input name="name" required placeholder="Es. Auto, mutuo casa..." defaultValue={editing?.name}/></Field>
+        <Field label="Categoria"><select value={category} onChange={e=>setCategory(e.target.value as FinancingCategory)}>{(Object.keys(FINANCING_LABEL) as FinancingCategory[]).map(key=><option key={key} value={key}>{FINANCING_LABEL[key]}</option>)}</select></Field>
+        <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
+        <Field label="Conto di addebito"><select name="accountId" defaultValue={editing?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
+      </div></section>
+      <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">2. Durata e importi</h4><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <Field label="Importo finanziato (€)"><input name="originalAmount" type="number" min=".01" step=".01" required value={originalAmount||''} onChange={e=>setOriginalAmount(Number(e.target.value))}/></Field>
+        <Field label="Debito residuo (€)"><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = iniziale" defaultValue={editing?.residualAmount}/></Field>
+        <Field label="Numero totale di rate"><input type="number" min="1" max="1200" required value={installmentCount} onChange={e=>setInstallmentCount(Number(e.target.value))}/></Field>
+        <Field label="Frequenza rate"><InstallmentFreqSelect value={freq} onChange={setFreq}/></Field>
+        <Field label="Data della prima rata"><input type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)}/></Field>
+      </div></section>
+      <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">3. Calcolo della rata</h4><div className="grid gap-4 md:grid-cols-2">
+        <Field label="Dato disponibile"><select value={interestMode} onChange={e=>setInterestMode(e.target.value as InterestMode)}><option value="payment">Conosco l’importo della rata</option><option value="percentage">Conosco il tasso annuo %</option><option value="total">Conosco il totale da restituire</option></select></Field>
+        {interestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={interestRate||''} onChange={e=>setInterestRate(Number(e.target.value))} placeholder="Es. 6,50"/></Field>:interestMode==='total'?<Field label="Totale da restituire (€)"><input type="number" min={originalAmount||.01} step=".01" required value={totalRepayable||''} onChange={e=>setTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>:<Field label="Importo rata (€)"><input type="number" min=".01" step=".01" required value={knownPayment||''} onChange={e=>setKnownPayment(Number(e.target.value))} placeholder="Es. 300"/></Field>}
+      </div></section>
+      <div className="grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-2 xl:grid-cols-4"><div><p className="text-xs text-muted-foreground">Rata {interestMode==='payment'?'indicata':'calcolata'}</p><p className="mt-1 text-xl font-semibold">{money.format(previewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Totale delle rate</p><p className="mt-1 text-xl font-semibold">{money.format(previewPayment*installmentCount)}</p></div><div><p className="text-xs text-muted-foreground">Ultima rata</p><p className="mt-1 font-semibold">{previewEndDate?dateFullIt(previewEndDate):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate previste da oggi</p><p className="mt-1 font-semibold text-primary">{previewProgress.remaining} di {installmentCount||0}</p></div></div>
+      <div className="flex flex-wrap gap-3"><button className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Salva finanziamento'}</button><button type="button" onClick={resetForm} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
     </form>}
-    <div className="grid gap-4 md:grid-cols-2">{s.financings.map(item=>{
+    <section><div className="mb-3"><h3 className="font-semibold">I tuoi piani rateali</h3><p className="text-sm text-muted-foreground">Una scheda pulita per ogni posizione; le singole rate sono visibili mese per mese in Scadenze.</p></div><div className="grid gap-4 xl:grid-cols-2">{s.financings.map(item=>{
       const plan=installmentProgress(item.startDate,item.freq,item.installmentCount)
       const progress=item.installmentCount>0?Math.min(100,plan.paid/item.installmentCount*100):0
-      return <Card key={item.id}>
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{FINANCING_LABEL[item.category]} · {item.kind==='piva'?'P.IVA':'Personale'}</p><h3 className="mt-1 font-semibold">{item.name}</h3></div><div className="flex gap-2"><EditButton onClick={()=>edit(item)} label="Modifica finanziamento"/><button onClick={()=>set(x=>({...x,financings:x.financings.filter(value=>value.id!==item.id)}))} aria-label="Elimina finanziamento"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></div>
-        <div className="mt-4 grid grid-cols-2 gap-3"><div><label className="text-xs text-muted-foreground" htmlFor={`residual-${item.id}`}>Residuo aggiornabile</label><input id={`residual-${item.id}`} className="mt-1 h-9 w-full rounded-xl border bg-background px-3 text-sm font-semibold" type="number" min="0" step=".01" value={item.residualAmount} onChange={e=>set(x=>({...x,financings:x.financings.map(value=>value.id===item.id?{...value,residualAmount:Number(e.target.value)}:value)}))}/></div><div><p className="text-xs text-muted-foreground">Rata</p><p className="mt-2 text-xl font-semibold">{money.format(item.paymentAmount)} <span className="text-xs font-normal text-muted-foreground">{FREQ_LABEL[item.freq].toLowerCase()}</span></p></div></div>
-        <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-secondary/60 p-3 text-center"><div><p className="text-[10px] text-muted-foreground">RATE TOTALI</p><p className="font-semibold">{item.installmentCount||'—'}</p></div><div><p className="text-[10px] text-muted-foreground">TRASCORSE</p><p className="font-semibold">{plan.paid}</p></div><div><p className="text-[10px] text-muted-foreground">MANCANTI</p><p className="font-semibold text-primary">{plan.remaining}</p></div></div>
-        <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div>
-        <p className="mt-2 text-xs text-muted-foreground">{item.startDate?`Dal ${dateFullIt(item.startDate)}`:'Data iniziale non indicata'}{plan.endDate?` al ${dateFullIt(plan.endDate)}`:''} · {item.interestMode==='total'?`Totale da restituire ${money.format(item.totalRepayable)}`:item.interestMode==='payment'?`Rata nota ${money.format(item.paymentAmount)} · Totale rate ${money.format(item.paymentAmount*item.installmentCount)}`:`Tasso annuo ${item.interestRate}%`}</p>
-        {plan.nextDate&&<p className="mt-1 text-xs font-medium text-primary">Prossima rata prevista: {dateFullIt(plan.nextDate)}</p>}
-        {item.installmentCount>0&&plan.remaining===0&&<p className="mt-1 text-xs font-semibold text-green-600">Piano rateale concluso</p>}
+      const account=s.accounts.find(value=>value.id===item.accountId)
+      return <Card key={item.id} className="overflow-hidden p-0">
+        <div className="border-b p-5"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-primary">{FINANCING_LABEL[item.category]}</span><span className="rounded-full bg-secondary px-2.5 py-1 text-[10px] font-semibold">{item.kind==='piva'?'P.IVA':'PERSONALE'}</span></div><h3 className="mt-3 text-lg font-semibold">{item.name}</h3>{account&&<p className="mt-1 text-xs text-muted-foreground">Addebito su {account.name}</p>}</div><div className="flex gap-3"><EditButton onClick={()=>edit(item)} label="Modifica finanziamento"/><button onClick={()=>set(x=>({...x,financings:x.financings.filter(value=>value.id!==item.id)}))} aria-label="Elimina finanziamento"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></div>
+          <div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-xl bg-secondary/70 p-3"><p className="text-xs text-muted-foreground">Debito residuo</p><p className="mt-1 text-xl font-semibold">{money.format(item.residualAmount)}</p></div><div className="rounded-xl bg-primary/10 p-3"><p className="text-xs text-primary">Rata {FREQ_LABEL[item.freq].toLowerCase()}</p><p className="mt-1 text-xl font-semibold text-primary">{money.format(item.paymentAmount)}</p></div></div>
+        </div>
+        <div className="p-5"><div className="flex items-end justify-between gap-3"><div><p className="text-xs text-muted-foreground">Avanzamento temporale</p><p className="mt-1 text-sm font-semibold">{plan.remaining} rate previste da oggi su {item.installmentCount}</p></div><p className="text-sm font-semibold text-primary">{progress.toFixed(0)}%</p></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div>
+          <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">Prima rata</p><p className="mt-1 font-semibold">{item.startDate?dateFullIt(item.startDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Prossima rata</p><p className="mt-1 font-semibold text-primary">{plan.nextDate?dateFullIt(plan.nextDate):'Piano concluso'}</p></div><div><p className="text-xs text-muted-foreground">Ultima rata</p><p className="mt-1 font-semibold">{plan.endDate?dateFullIt(plan.endDate):'—'}</p></div></div>
+          <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">{item.interestMode==='total'?`Totale da restituire ${money.format(item.totalRepayable)}`:item.interestMode==='payment'?`Rata inserita manualmente · Totale piano ${money.format(item.paymentAmount*item.installmentCount)}`:`Tasso annuo ${item.interestRate}% · Totale stimato ${money.format(item.totalRepayable)}`}</p>
+        </div>
       </Card>
-    })}{!s.financings.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Nessun finanziamento inserito</p></Card>}</div>
+    })}{!s.financings.length&&<Card className="xl:col-span-2"><p className="text-center text-sm text-muted-foreground">Nessun finanziamento inserito. Quando ne aggiungi uno, le rate compariranno anche nelle Scadenze.</p></Card>}</div></section>
   </div>
 }
 
@@ -700,9 +709,19 @@ function Piva({s,year}:{s:BudgetState;year:number}) {
 
 // ── SCADENZE ──
 function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+  const today=new Date().toISOString().slice(0,10)
+  const [selectedMonth,setSelectedMonth]=useState(today.slice(0,7))
   const [showForm,setShowForm]=useState(false)
   const [freq,setFreq]=useState<Freq>('unica')
   const [editing,setEditing]=useState<Deadline|null>(null)
+  const monthDate=new Date(`${selectedMonth}-01T12:00:00`)
+  const monthLabel=new Intl.DateTimeFormat('it-IT',{month:'long',year:'numeric'}).format(monthDate)
+  const shiftMonth=(amount:number)=>{const next=new Date(monthDate);next.setMonth(next.getMonth()+amount);setSelectedMonth(`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}`)}
+  const manualDeadlines=s.deadlines.filter(item=>item.date.startsWith(selectedMonth)).sort((a,b)=>a.date.localeCompare(b.date))
+  const financingDeadlines=s.financings.flatMap(financing=>installmentSchedule(financing.startDate,financing.freq,financing.installmentCount).filter(installment=>installment.date.startsWith(selectedMonth)).map(installment=>({financing,installment}))).sort((a,b)=>a.installment.date.localeCompare(b.installment.date))
+  const monthItems=[...manualDeadlines.map(deadline=>({type:'manual' as const,date:deadline.date,deadline})),...financingDeadlines.map(item=>({type:'financing' as const,date:item.installment.date,...item}))].sort((a,b)=>a.date.localeCompare(b.date))
+  const monthTotal=manualDeadlines.filter(item=>!item.paid).reduce((total,item)=>total+item.amount,0)+financingDeadlines.reduce((total,item)=>total+item.financing.paymentAmount,0)
+  const futureInstallments=s.financings.reduce((total,financing)=>total+installmentSchedule(financing.startDate,financing.freq,financing.installmentCount).filter(item=>item.date>today).length,0)
   const submit=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const f=new FormData(e.currentTarget)
@@ -712,20 +731,21 @@ function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActio
   }
   return (
     <div className="flex flex-col gap-6">
-      <Heading kicker="CALENDARIO" title="Scadenze" text="Obblighi fiscali e pagamenti futuri."/>
-      <button onClick={()=>{setEditing(null);setFreq('unica');setShowForm(v=>!v)}} className="self-start flex items-center gap-2 rounded-xl bg-primary px-4 h-10 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi scadenza</button>
+      <div className="flex flex-wrap items-end justify-between gap-4"><Heading kicker="CALENDARIO" title="Scadenze mensili" text="Scadenze manuali e rate dei finanziamenti, riunite automaticamente mese per mese."/><button onClick={()=>{setEditing(null);setFreq('unica');setShowForm(v=>!v)}} className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi scadenza</button></div>
+      <Card><div className="flex flex-wrap items-center justify-between gap-4"><button onClick={()=>shiftMonth(-1)} className="grid size-10 place-items-center rounded-xl border hover:bg-secondary" aria-label="Mese precedente"><ChevronLeft className="size-4"/></button><div className="text-center"><p className="text-xs font-semibold uppercase tracking-widest text-primary">Mese visualizzato</p><h3 className="mt-1 text-xl font-semibold capitalize">{monthLabel}</h3>{selectedMonth!==today.slice(0,7)&&<button onClick={()=>setSelectedMonth(today.slice(0,7))} className="mt-1 text-xs font-medium text-primary">Torna al mese corrente</button>}</div><button onClick={()=>shiftMonth(1)} className="grid size-10 place-items-center rounded-xl border hover:bg-secondary" aria-label="Mese successivo"><ChevronRight className="size-4"/></button></div></Card>
+      <div className="grid gap-4 sm:grid-cols-3"><Metric label={`Totale programmato · ${monthLabel}`} value={monthTotal}/><Card><p className="text-sm text-muted-foreground">Rate automatiche nel mese</p><p className="mt-3 text-2xl font-semibold">{financingDeadlines.length}</p><p className="mt-1 text-xs text-muted-foreground">Generate dai finanziamenti</p></Card><Card><p className="text-sm text-muted-foreground">Rate future complessive</p><p className="mt-3 text-2xl font-semibold">{futureInstallments}</p><p className="mt-1 text-xs text-muted-foreground">Distribuite nei prossimi mesi</p></Card></div>
       {showForm&&<form key={editing?.id??'new-deadline'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.title}”</p>}<Field label="Descrizione"><input name="title" required placeholder="Es. Assicurazione auto" defaultValue={editing?.title}/></Field><Field label="Data"><input name="date" type="date" required defaultValue={editing?.date}/></Field><Field label="Importo (€)"><input name="amount" type="number" step=".01" required defaultValue={editing?.amount}/></Field><Field label="Priorità"><select name="priority" defaultValue={editing?.priority??'alta'}><option value="alta">Alta</option><option value="media">Media</option><option value="bassa">Bassa</option></select></Field><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={()=>{setShowForm(false);setEditing(null)}} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
-      {s.deadlines.sort((a,b)=>a.date.localeCompare(b.date)).map(d=>(
-        <Card key={d.id}>
-          <div className="flex flex-wrap items-center gap-4">
-            <button onClick={()=>set(x=>({...x,deadlines:x.deadlines.map(v=>v.id===d.id?{...v,paid:!v.paid}:v)}))} className={`rounded-full px-3 py-1 text-xs font-semibold ${d.paid?'bg-secondary':'bg-primary text-primary-foreground'}`}>{d.paid?'Pagata':'Da pagare'}</button>
-            <div className="flex-1"><h3 className={d.paid?'line-through opacity-60 font-semibold':'font-semibold'}>{d.title}</h3><p className="text-sm text-muted-foreground">{dateIt(d.date)} · Priorità {d.priority}{d.freq&&d.freq!=='unica'?` · ${FREQ_LABEL[d.freq]}`:''}</p></div>
-            <b>{money.format(d.amount)}</b>
-            <EditButton onClick={()=>{setEditing(d);setFreq(d.freq??'unica');setShowForm(true)}} label="Modifica scadenza"/>
-            <button onClick={()=>set(x=>({...x,deadlines:x.deadlines.filter(v=>v.id!==d.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button>
-          </div>
-        </Card>
-      ))}
+      <section><div className="mb-3"><h3 className="font-semibold capitalize">Pagamenti di {monthLabel}</h3><p className="text-sm text-muted-foreground">Vedi solo il mese selezionato. Le rate con etichetta “Automatica” arrivano direttamente dai finanziamenti.</p></div><div className="flex flex-col gap-3">{monthItems.map(item=>{
+        const day=Number(item.date.slice(8,10))
+        const weekday=new Intl.DateTimeFormat('it-IT',{weekday:'short'}).format(new Date(`${item.date}T12:00:00`))
+        if(item.type==='manual'){
+          const d=item.deadline
+          return <Card key={`manual-${d.id}`} className="p-4"><div className="flex flex-wrap items-center gap-4"><div className="grid size-14 shrink-0 place-items-center rounded-xl bg-secondary text-center"><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">{weekday}</p><p className="text-xl font-bold leading-none">{day}</p></div></div><div className="min-w-48 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className={d.paid?'font-semibold line-through opacity-60':'font-semibold'}>{d.title}</h3><span className="rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase">Manuale</span></div><p className="mt-1 text-xs text-muted-foreground">Priorità {d.priority}{d.freq&&d.freq!=='unica'?` · ${FREQ_LABEL[d.freq]}`:''}</p></div><b className="text-right">{money.format(d.amount)}</b><button onClick={()=>set(x=>({...x,deadlines:x.deadlines.map(value=>value.id===d.id?{...value,paid:!value.paid}:value)}))} className={`rounded-full px-3 py-1 text-xs font-semibold ${d.paid?'bg-secondary':'bg-primary text-primary-foreground'}`}>{d.paid?'Pagata':'Da pagare'}</button><EditButton onClick={()=>{setEditing(d);setFreq(d.freq??'unica');setShowForm(true)}} label="Modifica scadenza"/><button onClick={()=>set(x=>({...x,deadlines:x.deadlines.filter(value=>value.id!==d.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></Card>
+        }
+        const {financing,installment}=item
+        const dateStatus=item.date<today?'Data trascorsa':item.date===today?'Scade oggi':'Programmata'
+        return <Card key={`financing-${financing.id}-${installment.number}`} className="border-primary/25 p-4"><div className="flex flex-wrap items-center gap-4"><div className="grid size-14 shrink-0 place-items-center rounded-xl bg-primary/10 text-center text-primary"><div><p className="text-[10px] font-semibold uppercase">{weekday}</p><p className="text-xl font-bold leading-none">{day}</p></div></div><div className="min-w-48 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">Rata · {financing.name}</h3><span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Automatica</span></div><p className="mt-1 text-xs text-muted-foreground">Rata {installment.number} di {financing.installmentCount} · {FINANCING_LABEL[financing.category]} · {dateStatus}</p></div><div className="text-right"><b className="text-lg">{money.format(financing.paymentAmount)}</b><p className="mt-1 text-[10px] font-semibold uppercase text-primary">{FREQ_LABEL[financing.freq]}</p></div></div></Card>
+      })}{!monthItems.length&&<Card><div className="py-8 text-center"><CalendarDays className="mx-auto size-8 text-muted-foreground/50"/><p className="mt-3 font-semibold">Nessun pagamento in questo mese</p><p className="mt-1 text-sm text-muted-foreground">Usa le frecce per cambiare mese oppure aggiungi una scadenza manuale.</p></div></Card>}</div></section>
     </div>
   )
 }
