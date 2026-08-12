@@ -40,6 +40,7 @@ export type Deadline = {
   freq?: Freq
 }
 export type FinancingCategory = 'mutuo' | 'auto' | 'prestito' | 'leasing' | 'altro'
+export type InterestMode = 'percentage' | 'total'
 export type Financing = {
   id: string
   name: string
@@ -49,9 +50,12 @@ export type Financing = {
   residualAmount: number
   paymentAmount: number
   freq: Freq
+  interestMode: InterestMode
   interestRate: number
-  startDate?: string
-  endDate?: string | null
+  totalRepayable: number
+  installmentCount: number
+  startDate: string
+  endDate: string
   accountId?: string
 }
 export type SimulationType = 'mutuo' | 'finanziamento' | 'spesa' | 'entrata'
@@ -61,8 +65,11 @@ export type Simulation = {
   type: SimulationType
   amount: number
   downPayment: number
+  interestMode: InterestMode
   interestRate: number
-  durationMonths: number
+  totalRepayable: number
+  installmentCount: number
+  durationMonths?: number
   freq: Freq
   startDate?: string
   kind: Kind
@@ -98,11 +105,74 @@ export function toMensile(amount: number, freq: Freq = 'mensile') {
   return amount * FREQ_MULT[freq]
 }
 
-export function monthlyPayment(principal: number, annualRate: number, durationMonths: number) {
-  if (principal <= 0 || durationMonths <= 0) return 0
-  const monthlyRate = annualRate / 100 / 12
-  if (monthlyRate <= 0) return principal / durationMonths
-  return principal * monthlyRate / (1 - Math.pow(1 + monthlyRate, -durationMonths))
+function installmentsPerYear(freq: Freq) {
+  if (freq === 'unica') return 1
+  return FREQ_MULT[freq] * 12
+}
+
+export function installmentAmount(
+  principal: number,
+  interestMode: InterestMode,
+  annualRate: number,
+  totalRepayable: number,
+  installmentCount: number,
+  freq: Freq
+) {
+  if (principal <= 0 || installmentCount <= 0) return 0
+  if (interestMode === 'total') return Math.max(0, totalRepayable) / installmentCount
+  const periodicRate = annualRate / 100 / installmentsPerYear(freq)
+  if (periodicRate <= 0) return principal / installmentCount
+  return principal * periodicRate / (1 - Math.pow(1 + periodicRate, -installmentCount))
+}
+
+function addMonthsClamped(value: Date, months: number) {
+  const result = new Date(value)
+  const day = result.getDate()
+  result.setDate(1)
+  result.setMonth(result.getMonth() + months)
+  const lastDay = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()
+  result.setDate(Math.min(day, lastDay))
+  return result
+}
+
+function addInstallmentInterval(value: Date, freq: Freq, intervals: number) {
+  if (freq === 'settimanale') {
+    const result = new Date(value)
+    result.setDate(result.getDate() + intervals * 7)
+    return result
+  }
+  const months = ({mensile:1,bimestrale:2,trimestrale:3,semestrale:6,annuale:12,unica:0} as Record<Freq,number>)[freq]
+  return addMonthsClamped(value, intervals * months)
+}
+
+function isoDate(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function installmentEndDate(startDate: string, freq: Freq, installmentCount: number) {
+  if (!startDate || installmentCount <= 0) return ''
+  const start = new Date(`${startDate}T12:00:00`)
+  if (Number.isNaN(start.getTime())) return ''
+  return isoDate(addInstallmentInterval(start, freq, Math.max(0, installmentCount - 1)))
+}
+
+export function installmentProgress(startDate: string, freq: Freq, installmentCount: number, asOfDate = isoDate(new Date())) {
+  const endDate = installmentEndDate(startDate, freq, installmentCount)
+  if (!startDate || !endDate || installmentCount <= 0) {
+    return { paid: 0, remaining: Math.max(0, installmentCount), nextDate: '', endDate }
+  }
+  const start = new Date(`${startDate}T12:00:00`)
+  let paid = 0
+  let nextDate = ''
+  for (let index = 0; index < installmentCount; index += 1) {
+    const dueDate = isoDate(addInstallmentInterval(start, freq, index))
+    if (dueDate <= asOfDate) paid += 1
+    else if (!nextDate) nextDate = dueDate
+  }
+  return { paid, remaining: Math.max(0, installmentCount - paid), nextDate, endDate }
 }
 
 export function isActiveAt(startDate: string | undefined, endDate: string | null | undefined, atDate: string) {
@@ -113,7 +183,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 4,
+    version: 5,
     profile: {
       name: '',
       ateco: '',
@@ -136,20 +206,37 @@ export function createEmptyState(): BudgetState {
 
 export const money = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 export const dateIt = (v: string) => new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short' }).format(new Date(`${v}T12:00:00`))
+export const dateFullIt = (v: string) => new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${v}T12:00:00`))
 export const uid = () => crypto.randomUUID()
 
 export function migrate(v: Partial<BudgetState>): BudgetState {
   const empty = createEmptyState()
   return {
-    ...empty, ...v, version: 4,
+    ...empty, ...v, version: 5,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
     categories: v.categories ?? [],
     assets: v.assets ?? [],
     deadlines: v.deadlines ?? [],
-    financings: v.financings ?? [],
-    simulations: v.simulations ?? [],
+    financings: (v.financings ?? []).map(financing => {
+      const installmentCount = financing.installmentCount ?? 0
+      const startDate = financing.startDate ?? ''
+      return {
+        ...financing,
+        interestMode: financing.interestMode ?? 'percentage' as InterestMode,
+        totalRepayable: financing.totalRepayable ?? financing.originalAmount,
+        installmentCount,
+        startDate,
+        endDate: financing.endDate ?? installmentEndDate(startDate, financing.freq, installmentCount)
+      }
+    }),
+    simulations: (v.simulations ?? []).map(simulation => ({
+      ...simulation,
+      interestMode: simulation.interestMode ?? 'percentage' as InterestMode,
+      totalRepayable: simulation.totalRepayable ?? Math.max(0, simulation.amount - simulation.downPayment),
+      installmentCount: simulation.installmentCount ?? Math.max(0, simulation.durationMonths ?? 0),
+    })),
     expenses: (v.expenses ?? []).map(e => ({ ...e, freq: e.freq ?? 'mensile' as Freq })),
     incomes: (v.incomes ?? []).map(i => ({ ...i, freq: i.freq ?? 'mensile' as Freq }))
   }
