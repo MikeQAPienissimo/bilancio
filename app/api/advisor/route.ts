@@ -1,15 +1,11 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import OpenAI from 'openai'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
 type AdvisorMessage = {
   role: 'user' | 'assistant'
   content: string
-}
-
-type AnthropicResponse = {
-  content?: Array<{ type?: string; text?: string }>
-  error?: { message?: string }
 }
 
 const MAX_SYSTEM_LENGTH = 20_000
@@ -32,10 +28,10 @@ function normalizeMessages(value: unknown): AdvisorMessage[] | null {
 }
 
 export async function POST(request: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
     return NextResponse.json(
-      { error: 'Advisor AI non configurato: aggiungi ANTHROPIC_API_KEY su Vercel e avvia un nuovo deploy.' },
+      { error: 'Advisor AI non configurato: aggiungi OPENAI_API_KEY su Vercel e avvia un nuovo deploy.' },
       { status: 503 }
     )
   }
@@ -68,43 +64,26 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5',
-        max_tokens: 1_200,
-        thinking: { type: 'disabled' },
-        system,
-        messages
-      })
+    const openai = new OpenAI({ apiKey })
+    const response = await openai.responses.create({
+      model: process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
+      instructions: system,
+      input: messages.map(message => ({ role: message.role, content: message.content })),
+      reasoning: { effort: 'low' },
+      max_output_tokens: 1_200
     })
-
-    const data = await response.json() as AnthropicResponse
-    if (!response.ok) {
-      console.error('Anthropic API error', response.status, data.error?.message)
-      const error = response.status === 401
-        ? 'La chiave Anthropic configurata non è valida.'
-        : response.status === 429
-          ? 'Limite AI raggiunto. Riprova tra poco.'
-          : 'Il servizio AI è temporaneamente non disponibile.'
-      return NextResponse.json({ error }, { status: response.status === 429 ? 429 : 502 })
-    }
-
-    const content = data.content
-      ?.filter(block => block.type === 'text' && typeof block.text === 'string')
-      .map(block => block.text)
-      .join('\n')
-      .trim()
+    const content = response.output_text.trim()
 
     if (!content) return NextResponse.json({ error: 'L’AI non ha restituito una risposta.' }, { status: 502 })
     return NextResponse.json({ content })
   } catch (error) {
     console.error('Advisor route error', error)
-    return NextResponse.json({ error: 'Errore di connessione al servizio AI.' }, { status: 502 })
+    if (error instanceof OpenAI.AuthenticationError) {
+      return NextResponse.json({ error: 'La chiave OpenAI configurata non è valida.' }, { status: 502 })
+    }
+    if (error instanceof OpenAI.RateLimitError) {
+      return NextResponse.json({ error: 'Limite AI raggiunto. Riprova tra poco.' }, { status: 429 })
+    }
+    return NextResponse.json({ error: 'Errore di connessione al servizio OpenAI.' }, { status: 502 })
   }
 }
