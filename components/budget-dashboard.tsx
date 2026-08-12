@@ -140,6 +140,10 @@ export function BudgetDashboard() {
     setState(demoState)
   }
 
+  useEffect(() => {
+    aiBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [aiMessages, aiLoading])
+
   if (authLoading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground text-sm">Caricamento...</div>
   if (!user) return <AuthScreen />
 
@@ -178,8 +182,6 @@ DATI FINANZIARI (${year}):
     } catch { setAiMessages(m => [...m, { role: 'assistant', content: 'Errore di connessione.' }]) }
     setAiLoading(false)
   }
-
-  useEffect(() => { aiBottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [aiMessages, aiLoading])
 
   const userName = user.user_metadata?.full_name?.split(' ')[0] || user.email?.split('@')[0] || 'Utente'
 
