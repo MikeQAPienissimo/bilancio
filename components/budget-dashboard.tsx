@@ -3,11 +3,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ArrowDownLeft, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
-import { Account, Asset, AssetMovimento, BudgetState, Deadline, Freq, FREQ_LABEL, FREQ_MULT, Income, Kind, demoState, dateIt, migrate, money, monthlyData, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
+import { Account, Asset, AssetMovimento, BudgetState, Deadline, Freq, FREQ_LABEL, FREQ_MULT, Income, Kind, createEmptyState, dateIt, migrate, money, monthlyData, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
-const SUPABASE_URL = 'https://qqijeduwhggffmffbunb.supabase.co'
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxaWplZHV3aGdnZmZtZmZidW5iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1MzQ2NzQsImV4cCI6MjEwMjExMDY3NH0.xRHLaN7QPOUWYToSUecXWYvw3gPa87YFhB2taGqilmI'
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY)
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 type View = 'dashboard'|'movimenti'|'conti'|'budget'|'patrimonio'|'piva'|'scadenze'|'previsioni'|'advisor'|'setup'
 const nav = [
@@ -32,22 +31,30 @@ function AuthScreen() {
   const [loading, setLoading] = useState(false)
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
+  const [authError, setAuthError] = useState('')
 
   const loginGoogle = async () => {
+    setAuthError('')
     setLoading(true)
-    await sb.auth.signInWithOAuth({
+    const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin }
     })
+    if (error) {
+      setAuthError(error.message)
+      setLoading(false)
+    }
   }
 
   const loginEmail = async (e: FormEvent) => {
     e.preventDefault()
     if (!email) return
+    setAuthError('')
     setLoading(true)
     const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } })
     setLoading(false)
     if (!error) setSent(true)
+    else setAuthError(error.message)
   }
 
   return (
@@ -69,17 +76,19 @@ function AuthScreen() {
             <>
               <button onClick={loginGoogle} disabled={loading} className="w-full h-11 rounded-xl border bg-background hover:bg-secondary flex items-center justify-center gap-3 text-sm font-semibold mb-4 transition-colors disabled:opacity-50">
                 <svg className="size-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-                Accedi con Google
+                Continua con Google
               </button>
-              <div className="relative mb-4"><div className="absolute inset-0 flex items-center"><div className="w-full border-t"/></div><div className="relative flex justify-center text-xs text-muted-foreground bg-card px-2">oppure</div></div>
+              <div className="relative mb-4"><div className="absolute inset-0 flex items-center"><div className="w-full border-t"/></div><div className="relative flex justify-center text-xs text-muted-foreground bg-card px-2">oppure usa qualsiasi email</div></div>
               <form onSubmit={loginEmail} className="flex flex-col gap-3">
-                <input type="email" placeholder="La tua email" value={email} onChange={e=>setEmail(e.target.value)} required className="h-11 rounded-xl border bg-background px-3 text-sm focus:outline-none focus:border-primary"/>
-                <button type="submit" disabled={loading} className="h-11 rounded-xl bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50">Invia magic link</button>
+                <input type="email" placeholder="nome@esempio.it" value={email} onChange={e=>setEmail(e.target.value)} required className="h-11 rounded-xl border bg-background px-3 text-sm focus:outline-none focus:border-primary"/>
+                <button type="submit" disabled={loading} className="h-11 rounded-xl bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50">Invia link di accesso</button>
+                <p className="text-xs text-muted-foreground">Funziona con Outlook, Hotmail, Yahoo, email aziendali e Gmail.</p>
               </form>
+              {authError&&<p className="mt-3 text-sm text-destructive">{authError}</p>}
             </>
           )}
         </div>
-        <p className="text-center text-xs text-muted-foreground mt-4">Nessun dato condiviso con terze parti.</p>
+        <p className="text-center text-xs text-muted-foreground mt-4">I dati finanziari vengono inviati all’AI solo quando usi Advisor AI.</p>
       </div>
     </div>
   )
@@ -89,7 +98,7 @@ function AuthScreen() {
 export function BudgetDashboard() {
   const [user, setUser] = useState<any>(null)
   const [authLoading, setAuthLoading] = useState(true)
-  const [state, setState] = useState<BudgetState>(demoState)
+  const [state, setState] = useState<BudgetState>(() => createEmptyState())
   const [view, setView] = useState<View>('dashboard')
   const [year, setYear] = useState(new Date().getFullYear())
   const [saving, setSaving] = useState(false)
@@ -115,6 +124,7 @@ export function BudgetDashboard() {
   // Carica dati da Supabase quando utente loggato
   useEffect(() => {
     if (!user) return
+    setState(createEmptyState())
     sb.from('user_data').select('data').eq('id', user.id).single().then(({ data, error }) => {
       if (data?.data && Object.keys(data.data).length > 0) {
         setState(migrate(data.data))
@@ -137,7 +147,9 @@ export function BudgetDashboard() {
   const logout = async () => {
     await sb.auth.signOut()
     setUser(null)
-    setState(demoState)
+    setState(createEmptyState())
+    setAiMessages([])
+    setAiAutoRan(false)
   }
 
   useEffect(() => {
@@ -172,15 +184,27 @@ DATI FINANZIARI (${year}):
     const newMsgs = [...aiMessages, { role: 'user' as const, content: msg }]
     setAiMessages(newMsgs); setAiInput(''); setAiLoading(true)
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const { data: { session } } = await sb.auth.getSession()
+      if (!session?.access_token) throw new Error('Sessione scaduta: esci e accedi di nuovo.')
+
+      const res = await fetch('/api/advisor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1000, system: buildAiContext(), messages: newMsgs })
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ system: buildAiContext(), messages: newMsgs })
       })
-      const data = await res.json()
-      setAiMessages(m => [...m, { role: 'assistant', content: data.content?.[0]?.text ?? 'Errore.' }])
-    } catch { setAiMessages(m => [...m, { role: 'assistant', content: 'Errore di connessione.' }]) }
-    setAiLoading(false)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Il servizio AI non è disponibile.')
+      if (typeof data.content !== 'string' || !data.content.trim()) throw new Error('L’AI non ha restituito una risposta.')
+      setAiMessages(m => [...m, { role: 'assistant', content: data.content }])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Errore di connessione.'
+      setAiMessages(m => [...m, { role: 'assistant', content: message }])
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   const userName = user.user_metadata?.full_name?.split(' ')[0] || user.email?.split('@')[0] || 'Utente'
@@ -628,7 +652,7 @@ function Setup({s,set,onSave,saveMsg,saving,logout}:{s:BudgetState;set:React.Dis
       <div className="flex flex-wrap gap-3">
         <button onClick={onSave} disabled={saving} className="flex items-center gap-2 h-11 rounded-xl bg-primary px-5 font-semibold text-primary-foreground disabled:opacity-50"><Save className="size-4"/>{saving?'Salvataggio...':'Salva tutto'}</button>
         {saveMsg&&<span className="flex items-center text-sm text-muted-foreground">{saveMsg}</span>}
-        <button onClick={()=>{set(demoState)}} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-card px-4 font-semibold text-sm hover:bg-secondary"><RotateCcw className="size-4"/>Ripristina demo</button>
+        <button onClick={()=>{if(window.confirm('Azzerare tutti i dati non ancora salvati?')) set(createEmptyState())}} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-card px-4 font-semibold text-sm hover:bg-secondary"><RotateCcw className="size-4"/>Azzera dati</button>
         <button onClick={logout} className="inline-flex h-11 items-center gap-2 rounded-xl border border-destructive/30 bg-card px-4 font-semibold text-sm text-destructive hover:bg-destructive/5"><LogOut className="size-4"/>Esci dall'account</button>
       </div>
     </div>
