@@ -9,6 +9,10 @@ export type Income = {
 export type Expense = Income & {
   category: string
   freq: Freq
+  subscription?: {
+    startDate?: string
+    endDate?: string | null
+  }
 }
 export type Account = {
   id: string; name: string; type: AccountType; balance: number; limit: number
@@ -35,6 +39,34 @@ export type Deadline = {
   paid: boolean; priority: 'alta' | 'media' | 'bassa'
   freq?: Freq
 }
+export type FinancingCategory = 'mutuo' | 'auto' | 'prestito' | 'leasing' | 'altro'
+export type Financing = {
+  id: string
+  name: string
+  category: FinancingCategory
+  kind: Kind
+  originalAmount: number
+  residualAmount: number
+  paymentAmount: number
+  freq: Freq
+  interestRate: number
+  startDate?: string
+  endDate?: string | null
+  accountId?: string
+}
+export type SimulationType = 'mutuo' | 'finanziamento' | 'spesa' | 'entrata'
+export type Simulation = {
+  id: string
+  name: string
+  type: SimulationType
+  amount: number
+  downPayment: number
+  interestRate: number
+  durationMonths: number
+  freq: Freq
+  startDate?: string
+  kind: Kind
+}
 export type LimiteSpesa = { fisso: number; perc: number }
 export type TaxProfile = {
   name: string; ateco: string; profitability: number
@@ -49,6 +81,8 @@ export type BudgetState = {
   categories: Category[]
   assets: Asset[]
   deadlines: Deadline[]
+  financings: Financing[]
+  simulations: Simulation[]
   limiteSpesa: LimiteSpesa
 }
 
@@ -64,9 +98,22 @@ export function toMensile(amount: number, freq: Freq = 'mensile') {
   return amount * FREQ_MULT[freq]
 }
 
+export function monthlyPayment(principal: number, annualRate: number, durationMonths: number) {
+  if (principal <= 0 || durationMonths <= 0) return 0
+  const monthlyRate = annualRate / 100 / 12
+  if (monthlyRate <= 0) return principal / durationMonths
+  return principal * monthlyRate / (1 - Math.pow(1 + monthlyRate, -durationMonths))
+}
+
+export function isActiveAt(startDate: string | undefined, endDate: string | null | undefined, atDate: string) {
+  if (startDate && startDate > atDate) return false
+  if (endDate && endDate < atDate) return false
+  return true
+}
+
 export function createEmptyState(): BudgetState {
   return {
-    version: 3,
+    version: 4,
     profile: {
       name: '',
       ateco: '',
@@ -80,6 +127,8 @@ export function createEmptyState(): BudgetState {
     categories: [],
     assets: [],
     deadlines: [],
+    financings: [],
+    simulations: [],
     incomes: [],
     expenses: []
   }
@@ -92,13 +141,15 @@ export const uid = () => crypto.randomUUID()
 export function migrate(v: Partial<BudgetState>): BudgetState {
   const empty = createEmptyState()
   return {
-    ...empty, ...v, version: 3,
+    ...empty, ...v, version: 4,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
     categories: v.categories ?? [],
     assets: v.assets ?? [],
     deadlines: v.deadlines ?? [],
+    financings: v.financings ?? [],
+    simulations: v.simulations ?? [],
     expenses: (v.expenses ?? []).map(e => ({ ...e, freq: e.freq ?? 'mensile' as Freq })),
     incomes: (v.incomes ?? []).map(i => ({ ...i, freq: i.freq ?? 'mensile' as Freq }))
   }
@@ -114,21 +165,27 @@ export function totals(s: BudgetState, y: number) {
   const tax = Math.max(0, taxable - contributions) * s.profile.substituteTax / 100
   const reserve = pivaIncome * s.profile.taxReserve / 100
   const totalIncome = sum(incomes)
+  const personalIncome = sum(incomes.filter(i => i.kind === 'personale'))
   const totalExpense = sum(expenses)
   const liquidity = s.accounts.reduce((n, a) => n + a.balance, 0)
   const assets = s.assets.reduce((n, a) => n + a.value, 0)
-  const mensileSpese = s.expenses.filter(e => !['finanziario','assicurativo','risparmio'].includes(e.category))
+  const financingDebt = s.financings.reduce((n, financing) => n + Math.max(0, financing.residualAmount), 0)
+  const monthlyFinancing = s.financings.reduce((n, financing) => n + toMensile(financing.paymentAmount, financing.freq), 0)
+  const mensileSpese = s.expenses.filter(e => (e.recurring || e.subscription) && !['finanziario','assicurativo','risparmio'].includes(e.category))
     .reduce((n, e) => n + toMensile(e.amount, e.freq), 0)
+  const totalMonthlyExpenses = mensileSpese + monthlyFinancing
   // Limite attivo: il più restrittivo tra fisso e percentuale
   const limFisso = s.limiteSpesa.fisso > 0 ? s.limiteSpesa.fisso : Infinity
   const limPerc = s.limiteSpesa.perc > 0 ? (totalIncome * s.limiteSpesa.perc / 100) : Infinity
   const limiteAttivo = Math.min(limFisso, limPerc)
-  const usatoLimite = (limiteAttivo < Infinity && limiteAttivo > 0) ? mensileSpese / limiteAttivo : 0
+  const usatoLimite = (limiteAttivo < Infinity && limiteAttivo > 0) ? totalMonthlyExpenses / limiteAttivo : 0
   return {
-    incomes, expenses, pivaIncome, taxable, contributions, tax, reserve,
-    totalIncome, totalExpense, liquidity, assets,
-    netWorth: liquidity + assets,
-    mensileSpese, limiteAttivo: isFinite(limiteAttivo) ? limiteAttivo : Infinity, usatoLimite: isNaN(usatoLimite) ? 0 : usatoLimite
+    incomes, expenses, pivaIncome, personalIncome, taxable, contributions, tax, reserve,
+    totalIncome, totalExpense, liquidity, assets, financingDebt, monthlyFinancing,
+    netWorth: liquidity + assets - financingDebt,
+    mensileSpese: totalMonthlyExpenses,
+    limiteAttivo: isFinite(limiteAttivo) ? limiteAttivo : Infinity,
+    usatoLimite: isNaN(usatoLimite) ? 0 : usatoLimite
   }
 }
 
