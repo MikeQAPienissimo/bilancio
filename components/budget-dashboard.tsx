@@ -2,8 +2,8 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ArrowDownLeft, BadgeEuro, Bell, BrainCircuit, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronRight, ChevronLeft, CircleDollarSign, FileUp, Landmark, LayoutDashboard, LogOut, Pencil, PiggyBank, Plus, Repeat2, RotateCcw, Save, Settings2, Target, Trash2, WalletCards } from 'lucide-react'
-import { Account, Asset, AssetMovimento, BenefitTransaction, BenefitType, BenefitWallet, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, ResidualMode, SavingsGoal, Simulation, SimulationType, WelfareCategory, createEmptyState, dateFullIt, dateIt, financingInstallmentSchedule, financingPrincipalReduction, financingRemainingInstallments, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, nextInstallmentAfter, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
+import { ArrowDownLeft, BadgeEuro, Bell, BrainCircuit, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronRight, ChevronLeft, CircleDollarSign, FileUp, Landmark, LayoutDashboard, LogOut, MoreHorizontal, Pencil, PiggyBank, Plus, Repeat2, RotateCcw, Save, Settings2, Target, Trash2, TrendingUp, WalletCards, X } from 'lucide-react'
+import { Account, Asset, AssetMovimento, BenefitAccreditMode, BenefitTransaction, BenefitType, BenefitWallet, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, ResidualMode, SavingsGoal, Simulation, SimulationType, WelfareCategory, createEmptyState, dateFullIt, dateIt, financingInstallmentSchedule, financingPrincipalReduction, financingRemainingInstallments, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, nextInstallmentAfter, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -24,6 +24,15 @@ const nav = [
   ['advisor','Advisor AI',BrainCircuit],
   ['setup','Impostazioni',Settings2],
 ] as const
+const navGroups = [
+  { label: 'OGGI', ids: ['dashboard','movimenti'] as View[] },
+  { label: 'GESTIONE', ids: ['conti','patrimonio','abbonamenti'] as View[] },
+  { label: 'PIANIFICA', ids: ['budget','scadenze','previsioni','finanziamenti','obiettivi'] as View[] },
+  { label: 'STRUMENTI', ids: ['piva','advisor','setup'] as View[] }
+]
+const planningViews:View[]=['budget','scadenze','previsioni','finanziamenti','obiettivi','abbonamenti']
+const moreViews:View[]=['conti','piva','advisor','setup']
+const navDescription:Record<View,string>={dashboard:'Situazione in un colpo d’occhio',movimenti:'Entrate, spese e accrediti',conti:'Conti, carte e disponibilità',budget:'Limiti per categoria',patrimonio:'Investimenti e benefit',finanziamenti:'Mutui, prestiti e rate',abbonamenti:'Costi ricorrenti attivi',obiettivi:'Risparmio e fondo emergenza',piva:'Fisco e accantonamenti',scadenze:'Calendario dei pagamenti',previsioni:'Scenari e sostenibilità',advisor:'Analisi sui tuoi dati',setup:'Profilo e personalizzazione'}
 
 const TIPO_EMOJI: Record<string,string> = {conto:'🏦',carta:'💳',fido:'📋',contanti:'💵',piva:'🧾'}
 const TIPO_LABEL: Record<string,string> = {conto:'Corrente',carta:'Carta credito',fido:'Fido',contanti:'Contanti',piva:'P.IVA'}
@@ -107,6 +116,7 @@ export function BudgetDashboard() {
   const [authLoading, setAuthLoading] = useState(true)
   const [state, setState] = useState<BudgetState>(() => createEmptyState())
   const [view, setView] = useState<View>('dashboard')
+  const [mobileMenu,setMobileMenu]=useState<'planning'|'more'|null>(null)
   const [year, setYear] = useState(new Date().getFullYear())
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
@@ -221,6 +231,9 @@ DATI FINANZIARI (${year}):
   }
 
   const userName = user.user_metadata?.full_name?.split(' ')[0] || user.email?.split('@')[0] || 'Utente'
+  const openView=(id:View)=>{setView(id);setMobileMenu(null);if(id==='advisor'&&!aiAutoRan){setAiAutoRan(true);void sendAI('Analizza la mia situazione finanziaria: evidenzia 3 punti di forza, 2 rischi urgenti e 3 azioni concrete da fare subito.')}}
+  const sectionLabel=navGroups.find(group=>group.ids.includes(view))?.label.toLocaleLowerCase('it-IT').replace(/^./,letter=>letter.toUpperCase())??'Bilancio'
+  const sheetItems=(mobileMenu==='planning'?planningViews:moreViews).map(id=>nav.find(item=>item[0]===id)!).filter(Boolean)
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground">
@@ -230,12 +243,8 @@ DATI FINANZIARI (${year}):
           <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground"><Landmark className="size-4"/></div>
           <div><p className="font-bold text-sm">Bilancio</p><p className="text-xs text-muted-foreground truncate max-w-[110px]">{userName}</p></div>
         </div>
-        <nav className="flex flex-col gap-0.5 flex-1">
-          {nav.map(([id, label, Icon]) => (
-            <button key={id} onClick={() => { setView(id); if(id==='advisor'&&!aiAutoRan){setAiAutoRan(true);sendAI("Analizza la mia situazione finanziaria: evidenzia 3 punti di forza, 2 rischi urgenti e 3 azioni concrete da fare subito.")} }} className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${view===id?'bg-primary text-primary-foreground':'text-muted-foreground hover:bg-secondary'}`}>
-              <Icon className="size-4 shrink-0"/>{label}<ChevronRight className="ml-auto size-3 opacity-40"/>
-            </button>
-          ))}
+        <nav className="flex flex-1 flex-col gap-4">
+          {navGroups.map(group=><section key={group.label}><p className="mb-1 px-3 text-[10px] font-bold tracking-[.16em] text-muted-foreground/60">{group.label}</p><div className="flex flex-col gap-0.5">{group.ids.map(id=>{const item=nav.find(value=>value[0]===id)!;const [,label,Icon]=item;return <button key={id} onClick={()=>openView(id)} className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${view===id?'bg-primary text-primary-foreground shadow-sm':'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}><Icon className="size-4 shrink-0"/>{label}<ChevronRight className="ml-auto size-3 opacity-40"/></button>})}</div></section>)}
         </nav>
         <div className="mt-4 border-t pt-4 flex flex-col gap-2">
           <button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
@@ -252,7 +261,7 @@ DATI FINANZIARI (${year}):
       <main className="pb-28 lg:ml-56 lg:pb-8">
         <header className="sticky top-0 z-20 border-b bg-background/95 px-5 py-3 backdrop-blur md:px-8">
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
-            <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">Bilancio</p><h1 className="text-lg font-semibold leading-tight">{active[1]}</h1></div>
+            <div><p className="text-xs font-semibold uppercase tracking-widest text-primary">{sectionLabel}</p><h1 className="text-lg font-semibold leading-tight">{active[1]}</h1></div>
             <div className="flex items-center gap-2">
               {/* Selettore anno */}
               <div className="flex items-center gap-1 rounded-xl border bg-card px-2 py-1.5">
@@ -261,6 +270,7 @@ DATI FINANZIARI (${year}):
                 <button onClick={() => setYear(y => y+1)} className="rounded-lg p-1 hover:bg-secondary"><ChevronRight className="size-4"/></button>
               </div>
               {/* Salva su mobile */}
+              <button onClick={()=>openView('movimenti')} className="lg:hidden grid size-8 place-items-center rounded-xl border bg-card text-primary" aria-label="Nuovo movimento"><Plus className="size-4"/></button>
               <button onClick={save} disabled={saving} className="lg:hidden flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50">
                 <Save className="size-3.5"/>{saving ? '...' : 'Salva'}
               </button>
@@ -310,13 +320,9 @@ DATI FINANZIARI (${year}):
         </div>
       </main>
 
-      {/* Bottom nav mobile */}
-      <nav className="fixed inset-x-2 bottom-2 z-30 flex gap-0.5 overflow-x-auto rounded-2xl border bg-card p-1.5 shadow-xl lg:hidden">
-        {nav.map(([id,label,Icon]) => (
-          <button key={id} onClick={()=>setView(id)} aria-label={label} className={`flex min-w-10 flex-col items-center gap-0.5 rounded-xl p-1.5 text-[9px] ${view===id?'bg-primary text-primary-foreground':'text-muted-foreground'}`}>
-            <Icon className="size-4"/><span className="truncate max-w-[40px]">{label.split(' ')[0]}</span>
-          </button>
-        ))}
+      {mobileMenu&&<div className="fixed inset-0 z-40 bg-black/35 backdrop-blur-[2px] lg:hidden" onClick={()=>setMobileMenu(null)}><div className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-[28px] border-t bg-card px-5 pb-7 pt-3 shadow-2xl" onClick={event=>event.stopPropagation()}><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-border"/><div className="mb-4 flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">{mobileMenu==='planning'?'Pianifica':'Tutto il resto'}</p><h2 className="mt-1 text-xl font-semibold">{mobileMenu==='planning'?'Organizza il futuro':'Conti e strumenti'}</h2><p className="mt-1 text-sm text-muted-foreground">{mobileMenu==='planning'?'Budget, scadenze, debiti e obiettivi.':'Funzioni utili, senza affollare la barra.'}</p></div><button onClick={()=>setMobileMenu(null)} className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary" aria-label="Chiudi menu"><X className="size-4"/></button></div><div className="grid grid-cols-2 gap-3">{sheetItems.map(([id,label,Icon])=><button key={id} onClick={()=>openView(id)} className={`rounded-2xl border p-4 text-left transition-colors ${view===id?'border-primary bg-primary/10':'bg-background hover:bg-secondary'}`}><div className={`grid size-9 place-items-center rounded-xl ${view===id?'bg-primary text-primary-foreground':'bg-secondary text-primary'}`}><Icon className="size-4"/></div><p className="mt-3 text-sm font-semibold">{label}</p><p className="mt-1 text-[11px] leading-snug text-muted-foreground">{navDescription[id]}</p></button>)}</div></div></div>}
+      <nav className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-5 rounded-[24px] border bg-card/95 p-1.5 shadow-2xl backdrop-blur lg:hidden" style={{paddingBottom:'max(.375rem, env(safe-area-inset-bottom))'}}>
+        {([['dashboard','Home',LayoutDashboard],['movimenti','Movimenti',ArrowDownLeft],['planning','Pianifica',TrendingUp],['patrimonio','Patrimonio',Landmark],['more','Altro',MoreHorizontal]] as const).map(([id,label,Icon])=>{const selected=id==='planning'?planningViews.includes(view):id==='more'?moreViews.includes(view):view===id;return <button key={id} onClick={()=>id==='planning'?setMobileMenu(value=>value==='planning'?null:'planning'):id==='more'?setMobileMenu(value=>value==='more'?null:'more'):openView(id)} className={`flex min-w-0 flex-col items-center gap-1 rounded-[18px] px-1 py-2 text-[10px] font-semibold transition-colors ${selected?'bg-primary/10 text-primary':'text-muted-foreground'}`}><Icon className={`size-[18px] ${selected?'stroke-[2.5]':''}`}/><span className="w-full truncate text-center">{label}</span></button>})}
       </nav>
     </div>
   )
@@ -363,9 +369,9 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
   const categoryNames=[...new Set(t.expenses.map(expense=>expense.category||'Senza categoria'))]
   const cats = categoryNames.map(name=>({name,value:t.expenses.filter(e=>e.category===name).reduce((n,e)=>n+e.amount,0)})).filter(x=>x.value).sort((a,b)=>b.value-a.value)
   const limPerc = (t.limiteAttivo<Infinity && t.limiteAttivo>0 && !isNaN(t.usatoLimite)) ? Math.min(100,t.usatoLimite*100) : null
-  const recurringIncome=s.incomes.filter(item=>item.recurring).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
+  const recurringIncome=s.incomes.filter(item=>item.recurring&&item.incomeClass!=='benefit').reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
   const monthlyIncome=recurringIncome>0?recurringIncome:t.totalIncome/12
-  const recurringPiva=s.incomes.filter(item=>item.recurring&&item.kind==='piva').reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
+  const recurringPiva=s.incomes.filter(item=>item.recurring&&item.kind==='piva'&&item.incomeClass!=='benefit').reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
   const monthlyMargin=monthlyIncome-t.mensileSpese-recurringPiva*s.profile.taxReserve/100
   const savingsRate=monthlyIncome>0?(monthlyIncome-t.mensileSpese)/monthlyIncome*100:0
   const debtRatio=monthlyIncome>0?t.monthlyFinancing/monthlyIncome*100:0
@@ -447,13 +453,17 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
   const [freq,setFreq] = useState<Freq>('mensile')
   const [isSubscription,setIsSubscription] = useState(false)
   const [openEnded,setOpenEnded] = useState(false)
+  const [paymentMode,setPaymentMode]=useState<'cash'|'benefit'|'mixed'>('cash')
+  const [selectedBenefitId,setSelectedBenefitId]=useState('')
+  const [benefitAmount,setBenefitAmount]=useState(0)
+  const [formError,setFormError]=useState('')
   const [editing,setEditing] = useState<{type:'income';item:Income}|{type:'expense';item:Expense}|null>(null)
   const [csvMsg,setCsvMsg]=useState('')
   const editItem=editing?.item
   const editExpense=editing?.type==='expense'?editing.item:undefined
-  const resetForm=()=>{setEditing(null);setFreq('mensile');setIsSubscription(false);setOpenEnded(false);setMode('spesa')}
+  const resetForm=()=>{setEditing(null);setFreq('mensile');setIsSubscription(false);setOpenEnded(false);setMode('spesa');setPaymentMode('cash');setSelectedBenefitId('');setBenefitAmount(0);setFormError('')}
   const editIncome=(item:Income)=>{setEditing({type:'income',item});setMode('entrata');setFreq(item.freq??'mensile');setIsSubscription(false);setOpenEnded(false)}
-  const editExpenseItem=(item:Expense)=>{setEditing({type:'expense',item});setMode('spesa');setFreq(item.freq);setIsSubscription(Boolean(item.subscription));setOpenEnded(item.subscription?.endDate===null)}
+  const editExpenseItem=(item:Expense)=>{setEditing({type:'expense',item});setMode('spesa');setFreq(item.freq);setIsSubscription(Boolean(item.subscription));setOpenEnded(item.subscription?.endDate===null);setSelectedBenefitId(item.benefitId??'');setBenefitAmount(item.benefitAmount??0);setPaymentMode(item.benefitId?(item.benefitAmount??0)<item.amount?'mixed':'benefit':'cash');setFormError('')}
   const submit = (e:FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const f=new FormData(e.currentTarget)
@@ -463,28 +473,32 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
     if(mode==='entrata') {
       set(x=>({...x,incomes:[base,...x.incomes.filter(item=>item.id!==editItem?.id)],expenses:x.expenses.filter(item=>item.id!==editItem?.id)}))
     } else {
-      const expense:Expense={
-        ...base,
-        freq,
-        category:String(f.get('category')),
-        subscription:isSubscription?{
-          startDate:String(f.get('startDate') ?? '')||undefined,
-          endDate:openEnded?null:String(f.get('endDate'))
-        }:undefined
-      }
-      set(x=>({...x,expenses:[expense,...x.expenses.filter(item=>item.id!==editItem?.id)],incomes:x.incomes.filter(item=>item.id!==editItem?.id)}))
+      const requestedBenefit=paymentMode==='cash'?0:paymentMode==='benefit'?base.amount:Math.min(base.amount,Math.max(0,benefitAmount))
+      if(requestedBenefit>0&&!selectedBenefitId){setFormError('Scegli il benefit utilizzato.');return}
+      const selectedWallet=s.benefits.find(item=>item.id===selectedBenefitId)
+      const restoredAmount=editExpense?.benefitId===selectedBenefitId?(editExpense.benefitAmount??0):0
+      if(requestedBenefit>0&&(!selectedWallet||selectedWallet.balance+restoredAmount<requestedBenefit)){setFormError(`Credito insufficiente: disponibile ${money.format((selectedWallet?.balance??0)+restoredAmount)}.`);return}
+      set(current=>{
+        let benefits=current.benefits.map(item=>({...item,transactions:[...item.transactions]}))
+        if(editExpense?.benefitId&&editExpense.benefitTransactionId){benefits=benefits.map(item=>item.id===editExpense.benefitId?{...item,balance:item.balance+(editExpense.benefitAmount??0),transactions:item.transactions.filter(transaction=>transaction.id!==editExpense.benefitTransactionId)}:item)}
+        const transactionId=requestedBenefit>0?uid():undefined
+        const expense:Expense={...base,accountId:base.amount-requestedBenefit>0?accountId:undefined,freq,category:String(f.get('category')),benefitId:requestedBenefit>0?selectedBenefitId:undefined,benefitAmount:requestedBenefit||undefined,benefitTransactionId:transactionId,subscription:isSubscription?{startDate:String(f.get('startDate') ?? '')||undefined,endDate:openEnded?null:String(f.get('endDate'))}:undefined}
+        if(requestedBenefit>0&&transactionId){benefits=benefits.map(item=>item.id===selectedBenefitId?{...item,balance:item.balance-requestedBenefit,transactions:[...item.transactions,{id:transactionId,date:base.date,type:'spend',amount:requestedBenefit,description:base.description,category:expense.category,note:paymentMode==='mixed'?`Quota benefit su ${money.format(base.amount)}`:undefined,expenseId:expense.id}]}:item)}
+        return {...current,benefits,expenses:[expense,...current.expenses.filter(item=>item.id!==editItem?.id)],incomes:current.incomes.filter(item=>item.id!==editItem?.id)}
+      })
     }
     e.currentTarget.reset();resetForm()
   }
   const incomes=s.incomes.filter(x=>new Date(x.date).getFullYear()===year).sort((a,b)=>b.date.localeCompare(a.date))
-  const personalIncomes=incomes.filter(x=>x.kind==='personale')
-  const pivaIncomes=incomes.filter(x=>x.kind==='piva')
+  const benefitIncomes=incomes.filter(x=>x.incomeClass==='benefit')
+  const personalIncomes=incomes.filter(x=>x.kind==='personale'&&x.incomeClass!=='benefit')
+  const pivaIncomes=incomes.filter(x=>x.kind==='piva'&&x.incomeClass!=='benefit')
   const expenses=s.expenses.filter(x=>new Date(x.date).getFullYear()===year).sort((a,b)=>b.date.localeCompare(a.date))
   const subscriptions=expenses.filter(x=>x.subscription)
   const otherExpenses=expenses.filter(x=>!x.subscription)
   const sum=(items:{amount:number}[])=>items.reduce((total,item)=>total+item.amount,0)
-  const removeIncome=(id:string)=>set(x=>({...x,incomes:x.incomes.filter(item=>item.id!==id)}))
-  const removeExpense=(id:string)=>set(x=>({...x,expenses:x.expenses.filter(item=>item.id!==id)}))
+  const removeIncome=(id:string)=>set(current=>{const income=current.incomes.find(item=>item.id===id);return{...current,incomes:current.incomes.filter(item=>item.id!==id),benefits:income?.benefitId&&income.benefitTransactionId?current.benefits.map(item=>item.id===income.benefitId?{...item,balance:Math.max(0,item.balance-income.amount),transactions:item.transactions.filter(transaction=>transaction.id!==income.benefitTransactionId)}:item):current.benefits}})
+  const removeExpense=(id:string)=>set(current=>{const expense=current.expenses.find(item=>item.id===id);return{...current,expenses:current.expenses.filter(item=>item.id!==id),benefits:expense?.benefitId&&expense.benefitTransactionId?current.benefits.map(item=>item.id===expense.benefitId?{...item,balance:item.balance+(expense.benefitAmount??0),transactions:item.transactions.filter(transaction=>transaction.id!==expense.benefitTransactionId)}:item):current.benefits}})
   const importCsv=async(file:File)=>{
     const text=await file.text()
     const lines=text.replace(/^\uFEFF/,'').split(/\r?\n/).filter(line=>line.trim())
@@ -518,12 +532,12 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
     })
     setCsvMsg(`${imported} movimenti importati${skipped?` · ${skipped} righe saltate o duplicate`:''}.`)
   }
-  const incomeList=(items:Income[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><b className="text-sm">{item.description}</b><p className="text-xs text-muted-foreground">{dateIt(item.date)}{item.recurring&&item.freq?` · ${FREQ_LABEL[item.freq]}`:''}</p></div><b className="text-sm text-green-600">+{money.format(item.amount)}</b><EditButton onClick={()=>editIncome(item)} label="Modifica entrata"/><button onClick={()=>removeIncome(item.id)} aria-label="Elimina entrata"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
-  const expenseList=(items:Expense[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{item.description}</b>{item.subscription&&<span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">ABBONAMENTO</span>}{item.kind==='piva'&&<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">P.IVA</span>}</div><p className="text-xs text-muted-foreground">{item.category||'Senza categoria'} · {FREQ_LABEL[item.freq]}</p>{item.subscription&&<p className="mt-1 text-xs text-muted-foreground">Inizio: {item.subscription.startDate?dateIt(item.subscription.startDate):'non indicato'} · Fine: {item.subscription.endDate?dateIt(item.subscription.endDate):'senza scadenza'}</p>}</div><b className="text-sm text-destructive">-{money.format(item.amount)}</b><EditButton onClick={()=>editExpenseItem(item)} label="Modifica spesa"/><button onClick={()=>removeExpense(item.id)} aria-label="Elimina spesa"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
+  const incomeList=(items:Income[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=>{const wallet=s.benefits.find(value=>value.id===item.benefitId);return <div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{item.description}</b>{item.incomeClass==='benefit'&&<span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700">BENEFIT</span>}</div><p className="text-xs text-muted-foreground">{dateIt(item.date)}{item.recurring&&item.freq?` · ${FREQ_LABEL[item.freq]}`:''}{wallet?` · ${wallet.name}`:''}</p></div><b className={`text-sm ${item.incomeClass==='benefit'?'text-violet-600':'text-green-600'}`}>+{money.format(item.amount)}</b>{item.incomeClass!=='benefit'&&<EditButton onClick={()=>editIncome(item)} label="Modifica entrata"/>}<button onClick={()=>removeIncome(item.id)} aria-label="Elimina entrata"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>})}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
+  const expenseList=(items:Expense[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=>{const wallet=s.benefits.find(value=>value.id===item.benefitId);return <div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{item.description}</b>{item.subscription&&<span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">ABBONAMENTO</span>}{item.kind==='piva'&&<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">P.IVA</span>}{wallet&&<span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700">{(item.benefitAmount??0)<item.amount?'PAGAMENTO MISTO':'BENEFIT'}</span>}</div><p className="text-xs text-muted-foreground">{item.category||'Senza categoria'} · {FREQ_LABEL[item.freq]}</p>{wallet&&<p className="mt-1 text-xs text-muted-foreground">{money.format(item.benefitAmount??0)} con {wallet.name}{(item.benefitAmount??0)<item.amount?` · ${money.format(item.amount-(item.benefitAmount??0))} dal conto`:''}</p>}{item.subscription&&<p className="mt-1 text-xs text-muted-foreground">Inizio: {item.subscription.startDate?dateIt(item.subscription.startDate):'non indicato'} · Fine: {item.subscription.endDate?dateIt(item.subscription.endDate):'senza scadenza'}</p>}</div><b className="text-sm text-destructive">-{money.format(item.amount)}</b><EditButton onClick={()=>editExpenseItem(item)} label="Modifica spesa"/><button onClick={()=>removeExpense(item.id)} aria-label="Elimina spesa"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>})}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
   return (
     <div className="flex flex-col gap-6">
       <Heading kicker="REGISTRO" title="Entrate e spese" text={`Movimenti ${year}, già separati per natura e attività.`}/>
-      <div className="grid gap-4 sm:grid-cols-3"><Metric label="Entrate personali" value={sum(personalIncomes)}/><Metric label="Introiti P.IVA" value={sum(pivaIncomes)}/><Metric label="Spese" value={sum(expenses)}/></div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Entrate personali" value={sum(personalIncomes)}/><Metric label="Introiti P.IVA" value={sum(pivaIncomes)}/><Metric label="Accrediti benefit" value={sum(benefitIncomes)} detail="Non aumentano la liquidità"/><Metric label="Spese complessive" value={sum(expenses)} detail="Include quelle pagate con benefit"/></div>
       <Card><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="font-semibold">Importa movimenti bancari</h3><p className="mt-1 text-sm text-muted-foreground">CSV con Data, Descrizione o Causale e Importo. Entrate positive e spese negative; i duplicati vengono ignorati.</p>{csvMsg&&<p className="mt-2 text-sm font-semibold text-primary">{csvMsg}</p>}</div><label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-xl border bg-background px-4 text-sm font-semibold hover:bg-secondary"><FileUp className="size-4"/>Scegli CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void importCsv(file);e.currentTarget.value=''}}/></label></div></Card>
       <form key={editItem?.id??'new-movement'} onSubmit={submit} className="grid gap-3 rounded-2xl border bg-card p-5 md:grid-cols-4">
         {editing&&<div className="col-span-full flex items-center justify-between rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary"><span>Stai modificando “{editItem?.description}”</span><button type="button" onClick={resetForm} className="text-xs">Annulla modifica</button></div>}
@@ -532,15 +546,20 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
         <Field label="Descrizione"><input name="description" required defaultValue={editItem?.description}/></Field>
         <Field label="Importo (€)"><input name="amount" type="number" min=".01" step=".01" required defaultValue={editItem?.amount}/></Field>
         <Field label="Tipo"><select name="kind" defaultValue={editItem?.kind??'personale'}><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
-        <Field label="Conto (facoltativo)"><select name="accountId" defaultValue={editItem?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(a=><option key={a.id} value={a.id}>{TIPO_EMOJI[a.type]} {a.name}</option>)}</select></Field>
+        {mode==='spesa'&&<Field label="Come hai pagato?"><select value={paymentMode} onChange={event=>{setPaymentMode(event.target.value as typeof paymentMode);setFormError('')}}><option value="cash">Conto, carta o contanti</option><option value="benefit">Solo con un benefit</option><option value="mixed">Pagamento misto</option></select></Field>}
+        {(mode==='entrata'||paymentMode!=='benefit')&&<Field label={paymentMode==='mixed'?'Conto per la parte restante':'Conto (facoltativo)'}><select name="accountId" defaultValue={editItem?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(a=><option key={a.id} value={a.id}>{TIPO_EMOJI[a.type]} {a.name}</option>)}</select></Field>}
+        {mode==='spesa'&&paymentMode!=='cash'&&<Field label="Benefit utilizzato"><select value={selectedBenefitId} onChange={event=>{setSelectedBenefitId(event.target.value);setFormError('')}} required><option value="">Scegli...</option>{s.benefits.filter(item=>item.balance>0||item.id===editExpense?.benefitId).map(item=><option key={item.id} value={item.id}>{item.name} · {money.format(item.balance)}</option>)}</select></Field>}
+        {mode==='spesa'&&paymentMode==='mixed'&&<Field label="Quota pagata con benefit (€)"><input type="number" min=".01" step=".01" value={benefitAmount||''} onChange={event=>{setBenefitAmount(Number(event.target.value));setFormError('')}} required/></Field>}
         <Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field>
         {mode==='spesa'&&<Field label="Categoria"><input name="category" list="expense-categories" required placeholder="Es. Casa, Auto..." defaultValue={editExpense?.category}/><datalist id="expense-categories">{s.categories.map(c=><option key={c.id} value={c.name}/>)}</datalist></Field>}
         <label className="flex items-center gap-2 text-sm col-span-full"><input name="recurring" type="checkbox" defaultChecked={editItem?.recurring}/>Ricorrente</label>
         {mode==='spesa'&&<label className="flex items-center gap-2 text-sm col-span-full"><input type="checkbox" checked={isSubscription} onChange={e=>setIsSubscription(e.target.checked)}/>È un abbonamento</label>}
         {mode==='spesa'&&isSubscription&&<><Field label="Data inizio (facoltativa)"><input name="startDate" type="date" defaultValue={editExpense?.subscription?.startDate}/></Field><Field label="Data fine"><input name="endDate" type="date" disabled={openEnded} required={!openEnded} defaultValue={editExpense?.subscription?.endDate??''}/></Field><label className="flex items-center gap-2 self-end pb-2 text-sm md:col-span-2"><input type="checkbox" checked={openEnded} onChange={e=>setOpenEnded(e.target.checked)}/>Data fine non definita</label></>}
+        {formError&&<p className="col-span-full rounded-xl bg-destructive/10 px-3 py-2 text-sm font-semibold text-destructive">{formError}</p>}
         <button className="col-span-full h-11 rounded-xl bg-primary px-4 font-semibold text-primary-foreground">{editing?<Pencil className="mr-2 inline size-4"/>:<Plus className="mr-2 inline size-4"/>}{editing?'Salva modifiche':'Aggiungi'}</button>
       </form>
       <div className="grid gap-5 lg:grid-cols-2"><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Entrate personali</h3><p className="text-sm text-muted-foreground">Stipendio e altri introiti non P.IVA</p></div>{incomeList(personalIncomes,'Nessuna entrata personale')}</section><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Introiti P.IVA</h3><p className="text-sm text-muted-foreground">Fatture e compensi professionali</p></div>{incomeList(pivaIncomes,'Nessun introito P.IVA')}</section></div>
+      <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Accrediti benefit</h3><p className="text-sm text-muted-foreground">Valore ricevuto su buoni pasto, welfare e carte carburante: visibile, ma separato dal reddito monetario.</p></div>{incomeList(benefitIncomes,'Nessun accredito benefit registrato')}</section>
       <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Abbonamenti</h3><p className="text-sm text-muted-foreground">Costi ricorrenti con periodo definito o senza scadenza</p></div>{expenseList(subscriptions,'Nessun abbonamento')}</section>
       <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Altre spese</h3><p className="text-sm text-muted-foreground">Spese personali e professionali</p></div>{expenseList(otherExpenses,'Nessuna spesa')}</section>
     </div>
@@ -702,20 +721,97 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
 
 function Benefits({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
   const today=new Date().toISOString().slice(0,10)
+  const currentPeriod=today.slice(0,7)
   const [showForm,setShowForm]=useState(false)
   const [editing,setEditing]=useState<BenefitWallet|null>(null)
   const [type,setType]=useState<BenefitType>('meal')
   const [welfareCategory,setWelfareCategory]=useState<WelfareCategory>('shopping')
+  const [accreditMode,setAccreditMode]=useState<BenefitAccreditMode>('none')
   const [movementId,setMovementId]=useState<string|null>(null)
   const [movementType,setMovementType]=useState<BenefitTransaction['type']>('spend')
   const total=s.benefits.reduce((sum,item)=>sum+Math.max(0,item.balance),0)
-  const expiring=s.benefits.filter(item=>item.balance>0&&item.expiryDate&&item.expiryDate>=today&&item.expiryDate<=(()=>{const d=new Date(`${today}T12:00:00`);d.setDate(d.getDate()+30);return d.toISOString().slice(0,10)})()).length
-  const reset=()=>{setEditing(null);setShowForm(false);setType('meal');setWelfareCategory('shopping')}
-  const submit=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=new FormData(event.currentTarget);const balance=Number(form.get('balance'));const benefit:BenefitWallet={id:editing?.id??uid(),name:String(form.get('name')),type,welfareCategory:type==='welfare'?welfareCategory:undefined,issuer:String(form.get('issuer')||'')||undefined,balance,expiryDate:String(form.get('expiryDate')||'')||undefined,notes:String(form.get('notes')||'')||undefined,transactions:editing?.transactions??(balance>0?[{id:uid(),date:today,type:'topup',amount:balance,note:'Saldo iniziale'}]:[])};if(!benefit.name||benefit.balance<0)return;set(value=>({...value,benefits:editing?value.benefits.map(item=>item.id===editing.id?benefit:item):[benefit,...value.benefits]}));event.currentTarget.reset();reset()}
-  const edit=(item:BenefitWallet)=>{setEditing(item);setType(item.type);setWelfareCategory(item.welfareCategory??'shopping');setShowForm(true)}
-  const addMovement=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=new FormData(event.currentTarget),amount=Number(form.get('amount')),id=movementId;if(!id||amount<=0)return;set(value=>({...value,benefits:value.benefits.map(item=>{if(item.id!==id)return item;const applied=movementType==='spend'?Math.min(item.balance,amount):amount;return{...item,balance:movementType==='spend'?Math.max(0,item.balance-applied):item.balance+applied,transactions:[...item.transactions,{id:uid(),date:String(form.get('date')),type:movementType,amount:applied,note:String(form.get('note')||'')||undefined}]}})}));event.currentTarget.reset();setMovementId(null)}
-  const undoLast=(item:BenefitWallet)=>{const transaction=item.transactions.at(-1);if(!transaction||!window.confirm('Annullare l’ultimo movimento?'))return;set(value=>({...value,benefits:value.benefits.map(benefit=>benefit.id===item.id?{...benefit,balance:transaction.type==='spend'?benefit.balance+transaction.amount:Math.max(0,benefit.balance-transaction.amount),transactions:benefit.transactions.filter(value=>value.id!==transaction.id)}:benefit)}))}
-  return <section className="mt-2 border-t pt-7"><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-semibold text-primary">BENEFIT SPENDIBILI</p><h2 className="mt-2 text-2xl font-semibold">Buoni pasto, welfare e carburante</h2><p className="mt-1 text-sm text-muted-foreground">Tieni sotto controllo saldi, utilizzi e scadenze senza contarli come liquidità bancaria.</p></div><button onClick={()=>{if(showForm)reset();else setShowForm(true)}} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi benefit</button></div><div className="mt-5 grid gap-4 sm:grid-cols-3"><Metric label="Credito disponibile" value={total}/><Card><p className="text-sm text-muted-foreground">Strumenti attivi</p><p className="mt-3 text-2xl font-semibold">{s.benefits.filter(item=>item.balance>0).length}</p><p className="mt-1 text-xs text-muted-foreground">Buoni, portali welfare e carte</p></Card><Card><p className="text-sm text-muted-foreground">In scadenza entro 30 giorni</p><p className={`mt-3 text-2xl font-semibold ${expiring?'text-destructive':''}`}>{expiring}</p><p className="mt-1 text-xs text-muted-foreground">Visibili anche negli avvisi</p></Card></div>{showForm&&<form key={editing?.id??'new-benefit'} onSubmit={submit} className="mt-5 grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.name}”</p>}<Field label="Nome"><input name="name" required defaultValue={editing?.name} placeholder="Es. Edenred, Pluxee, carta carburante..."/></Field><Field label="Tipo"><select value={type} onChange={event=>setType(event.target.value as BenefitType)}>{(Object.keys(BENEFIT_LABEL) as BenefitType[]).map(key=><option key={key} value={key}>{BENEFIT_LABEL[key]}</option>)}</select></Field>{type==='welfare'&&<Field label="Categoria welfare"><select value={welfareCategory} onChange={event=>setWelfareCategory(event.target.value as WelfareCategory)}>{(Object.keys(WELFARE_LABEL) as WelfareCategory[]).map(key=><option key={key} value={key}>{WELFARE_LABEL[key]}</option>)}</select></Field>}<Field label="Gestore / emittente"><input name="issuer" defaultValue={editing?.issuer} placeholder="Es. Edenred, Pluxee, Eni..."/></Field><Field label="Saldo attuale (€)"><input name="balance" type="number" min="0" step=".01" required defaultValue={editing?.balance??0}/></Field><Field label="Scadenza (facoltativa)"><input name="expiryDate" type="date" defaultValue={editing?.expiryDate}/></Field><Field label="Note"><input name="notes" defaultValue={editing?.notes} placeholder="Non inserire PIN o numero completo"/></Field><div className="flex items-end gap-2"><button className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">{editing?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={reset} className="h-10 rounded-xl border px-3 text-sm">Annulla</button></div></form>}<div className="mt-5 grid gap-4 md:grid-cols-2">{s.benefits.map(item=>{const last=item.transactions.at(-1),expired=Boolean(item.expiryDate&&item.expiryDate<today);return <Card key={item.id} className={expired&&item.balance>0?'border-destructive/40':''}><div className="flex items-start justify-between gap-3"><div><span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{BENEFIT_LABEL[item.type].toUpperCase()}</span><h3 className="mt-3 font-semibold">{item.name}</h3><p className="mt-1 text-xs text-muted-foreground">{item.type==='welfare'&&item.welfareCategory?WELFARE_LABEL[item.welfareCategory]:item.issuer||'Gestore non indicato'}</p></div><div className="flex gap-3"><EditButton onClick={()=>edit(item)} label="Modifica benefit"/><button onClick={()=>set(value=>({...value,benefits:value.benefits.filter(benefit=>benefit.id!==item.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></div><div className="mt-4 rounded-xl bg-secondary/60 p-3"><p className="text-xs text-muted-foreground">Saldo disponibile</p><p className="mt-1 text-2xl font-semibold">{money.format(item.balance)}</p></div><div className="mt-3 flex justify-between gap-3 text-xs"><span className="text-muted-foreground">Scadenza</span><b className={expired?'text-destructive':''}>{item.expiryDate?dateFullIt(item.expiryDate):'Non indicata'}</b></div>{last&&<div className="mt-3 flex items-center gap-2 border-t pt-3 text-xs"><span className="min-w-0 flex-1 text-muted-foreground">Ultimo: {last.type==='spend'?'Utilizzo':'Ricarica'} · {dateIt(last.date)}{last.note?` · ${last.note}`:''}</span><b className={last.type==='spend'?'text-destructive':'text-green-600'}>{last.type==='spend'?'-':'+'}{money.format(last.amount)}</b><button onClick={()=>undoLast(item)} className="text-primary">Annulla</button></div>}<div className="mt-3 flex gap-2"><button onClick={()=>{setMovementId(item.id);setMovementType('spend')}} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Registra utilizzo</button><button onClick={()=>{setMovementId(item.id);setMovementType('topup')}} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Ricarica</button></div>{movementId===item.id&&<form onSubmit={addMovement} className="mt-3 grid gap-3 border-t pt-3 sm:grid-cols-2"><p className="col-span-full text-sm font-semibold">{movementType==='spend'?'Nuovo utilizzo':'Nuova ricarica'}</p><Field label="Data"><input name="date" type="date" required defaultValue={today}/></Field><Field label="Importo (€)"><input name="amount" type="number" min=".01" step=".01" required/></Field><Field label="Note"><input name="note" placeholder="Facoltativo"/></Field><div className="flex items-end gap-2"><button className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">Salva</button><button type="button" onClick={()=>setMovementId(null)} className="h-10 rounded-xl border px-3 text-sm">Annulla</button></div></form>}</Card>})}{!s.benefits.length&&<Card className="md:col-span-2"><p className="py-5 text-center text-sm text-muted-foreground">Nessun benefit registrato.</p></Card>}</div></section>
+  const expiryLimit=(()=>{const date=new Date(`${today}T12:00:00`);date.setDate(date.getDate()+30);return date.toISOString().slice(0,10)})()
+  const expiring=s.benefits.filter(item=>item.balance>0&&item.expiryDate&&item.expiryDate>=today&&item.expiryDate<=expiryLimit).length
+  const reset=()=>{setEditing(null);setShowForm(false);setType('meal');setWelfareCategory('shopping');setAccreditMode('none')}
+  const submit=(event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault()
+    const form=new FormData(event.currentTarget),balance=Number(form.get('balance'))
+    const benefit:BenefitWallet={
+      id:editing?.id??uid(),name:String(form.get('name')),type,
+      welfareCategory:type==='welfare'?welfareCategory:undefined,
+      issuer:String(form.get('issuer')||'')||undefined,balance,
+      expiryDate:String(form.get('expiryDate')||'')||undefined,
+      notes:String(form.get('notes')||'')||undefined,accreditMode,
+      monthlyAmount:accreditMode==='fixed'?Number(form.get('monthlyAmount'))||undefined:undefined,
+      mealValue:accreditMode==='meal_count'?Number(form.get('mealValue'))||undefined:undefined,
+      expectedMealCount:accreditMode==='meal_count'?Number(form.get('expectedMealCount'))||undefined:undefined,
+      creditDay:accreditMode!=='none'?Number(form.get('creditDay'))||undefined:undefined,
+      transactions:editing?.transactions??(balance>0?[{id:uid(),date:today,type:'topup',amount:balance,note:'Saldo iniziale',source:'adjustment'}]:[])
+    }
+    if(!benefit.name||benefit.balance<0)return
+    set(value=>({...value,benefits:editing?value.benefits.map(item=>item.id===editing.id?benefit:item):[benefit,...value.benefits]}))
+    event.currentTarget.reset();reset()
+  }
+  const edit=(item:BenefitWallet)=>{setEditing(item);setType(item.type);setWelfareCategory(item.welfareCategory??'shopping');setAccreditMode(item.accreditMode);setShowForm(true)}
+  const addMovement=(event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault()
+    const form=new FormData(event.currentTarget),id=movementId,wallet=s.benefits.find(item=>item.id===id)
+    if(!id||!wallet)return
+    const amount=movementType==='topup'&&wallet.accreditMode==='meal_count'?(Number(form.get('mealCount'))||0)*(wallet.mealValue??0):Number(form.get('amount'))
+    if(amount<=0||movementType==='spend'&&amount>wallet.balance)return
+    const date=String(form.get('date')),description=String(form.get('description')||'').trim(),category=String(form.get('category')||'').trim(),note=String(form.get('note')||'')||undefined
+    const source=movementType==='topup'?String(form.get('source')||'employer') as BenefitTransaction['source']:undefined
+    const transactionId=uid(),incomeId=movementType==='topup'&&source==='employer'?uid():undefined,expenseId=movementType==='spend'?uid():undefined
+    const transaction:BenefitTransaction={id:transactionId,date,type:movementType,amount,note,description:description||undefined,category:category||undefined,source,incomeId,expenseId}
+    set(value=>({...value,
+      benefits:value.benefits.map(item=>item.id===id?{...item,balance:movementType==='spend'?item.balance-amount:item.balance+amount,transactions:[...item.transactions,transaction]}:item),
+      incomes:incomeId?[{id:incomeId,date,description:description||`Accredito ${wallet.name}`,amount,kind:'personale',recurring:false,freq:'unica',incomeClass:'benefit',benefitId:id,benefitTransactionId:transactionId},...value.incomes]:value.incomes,
+      expenses:expenseId?[{id:expenseId,date,description:description||`Utilizzo ${wallet.name}`,amount,kind:'personale',recurring:false,freq:'unica',category:category||'Benefit',benefitId:id,benefitAmount:amount,benefitTransactionId:transactionId},...value.expenses]:value.expenses
+    }))
+    event.currentTarget.reset();setMovementId(null)
+  }
+  const undoLast=(item:BenefitWallet)=>{
+    const transaction=item.transactions.at(-1)
+    if(!transaction||!window.confirm('Annullare l’ultimo movimento collegato?'))return
+    set(value=>({...value,
+      benefits:value.benefits.map(benefit=>benefit.id===item.id?{...benefit,balance:transaction.type==='spend'?benefit.balance+transaction.amount:Math.max(0,benefit.balance-transaction.amount),transactions:benefit.transactions.filter(current=>current.id!==transaction.id)}:benefit),
+      incomes:transaction.incomeId?value.incomes.filter(income=>income.id!==transaction.incomeId):value.incomes,
+      expenses:transaction.expenseId?value.expenses.filter(expense=>expense.id!==transaction.expenseId):value.expenses
+    }))
+  }
+  const removeBenefit=(item:BenefitWallet)=>{if(!window.confirm(`Eliminare “${item.name}”? I movimenti già registrati resteranno nello storico.`))return;set(value=>({...value,benefits:value.benefits.filter(benefit=>benefit.id!==item.id),incomes:value.incomes.map(income=>income.benefitId===item.id?{...income,benefitId:undefined,benefitTransactionId:undefined}:income),expenses:value.expenses.map(expense=>expense.benefitId===item.id?{...expense,benefitId:undefined,benefitTransactionId:undefined}:expense)}))}
+  return <section className="mt-2 border-t pt-7">
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-semibold text-primary">BENEFIT SPENDIBILI</p><h2 className="mt-2 text-2xl font-semibold">Buoni pasto, welfare e carburante</h2><p className="mt-1 text-sm text-muted-foreground">Funzionano come conti manuali: accrediti e utilizzi finiscono anche nei Movimenti, senza falsare la liquidità.</p></div><button onClick={()=>{if(showForm)reset();else setShowForm(true)}} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi benefit</button></div>
+    <div className="mt-5 grid gap-4 sm:grid-cols-3"><Metric label="Credito disponibile" value={total}/><Card><p className="text-sm text-muted-foreground">Strumenti attivi</p><p className="mt-3 text-2xl font-semibold">{s.benefits.filter(item=>item.balance>0).length}</p><p className="mt-1 text-xs text-muted-foreground">Separati dalla liquidità bancaria</p></Card><Card><p className="text-sm text-muted-foreground">In scadenza entro 30 giorni</p><p className={`mt-3 text-2xl font-semibold ${expiring?'text-destructive':''}`}>{expiring}</p><p className="mt-1 text-xs text-muted-foreground">Visibili anche negli avvisi</p></Card></div>
+    {showForm&&<form key={editing?.id??'new-benefit'} onSubmit={submit} className="mt-5 grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
+      {editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.name}”</p>}
+      <Field label="Nome"><input name="name" required defaultValue={editing?.name} placeholder="Es. Edenred, Pluxee, carta carburante..."/></Field>
+      <Field label="Tipo"><select value={type} onChange={event=>setType(event.target.value as BenefitType)}>{(Object.keys(BENEFIT_LABEL) as BenefitType[]).map(key=><option key={key} value={key}>{BENEFIT_LABEL[key]}</option>)}</select></Field>
+      {type==='welfare'&&<Field label="Categoria welfare"><select value={welfareCategory} onChange={event=>setWelfareCategory(event.target.value as WelfareCategory)}>{(Object.keys(WELFARE_LABEL) as WelfareCategory[]).map(key=><option key={key} value={key}>{WELFARE_LABEL[key]}</option>)}</select></Field>}
+      <Field label="Gestore / emittente"><input name="issuer" defaultValue={editing?.issuer} placeholder="Es. Edenred, Pluxee, Eni..."/></Field>
+      <Field label="Saldo attuale (€)"><input name="balance" type="number" min="0" step=".01" required defaultValue={editing?.balance??0}/></Field>
+      <Field label="Scadenza (facoltativa)"><input name="expiryDate" type="date" defaultValue={editing?.expiryDate}/></Field>
+      <Field label="Accredito mensile"><select value={accreditMode} onChange={event=>setAccreditMode(event.target.value as BenefitAccreditMode)}><option value="none">Nessuna previsione</option><option value="fixed">Importo fisso</option><option value="variable">Importo variabile da confermare</option><option value="meal_count">Numero buoni × valore</option></select></Field>
+      {accreditMode!=='none'&&<Field label="Giorno previsto"><input name="creditDay" type="number" min="1" max="28" defaultValue={editing?.creditDay??1}/></Field>}
+      {accreditMode==='fixed'&&<Field label="Importo mensile (€)"><input name="monthlyAmount" type="number" min=".01" step=".01" required defaultValue={editing?.monthlyAmount}/></Field>}
+      {accreditMode==='meal_count'&&<><Field label="Valore singolo buono (€)"><input name="mealValue" type="number" min=".01" step=".01" required defaultValue={editing?.mealValue}/></Field><Field label="Numero buoni previsto"><input name="expectedMealCount" type="number" min="1" required defaultValue={editing?.expectedMealCount}/></Field></>}
+      <Field label="Note"><input name="notes" defaultValue={editing?.notes} placeholder="Non inserire PIN o numero completo"/></Field>
+      <div className="flex items-end gap-2"><button className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">{editing?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={reset} className="h-10 rounded-xl border px-3 text-sm">Annulla</button></div>
+    </form>}
+    <div className="mt-5 grid gap-4 md:grid-cols-2">{s.benefits.map(item=>{
+      const last=item.transactions.at(-1),expired=Boolean(item.expiryDate&&item.expiryDate<today)
+      const creditedThisMonth=item.transactions.some(transaction=>transaction.type==='topup'&&transaction.source==='employer'&&transaction.date.startsWith(currentPeriod))
+      const planned=item.accreditMode==='fixed'?item.monthlyAmount:item.accreditMode==='meal_count'?(item.mealValue??0)*(item.expectedMealCount??0):undefined
+      return <Card key={item.id} className={expired&&item.balance>0?'border-destructive/40':''}>
+        <div className="flex items-start justify-between gap-3"><div><span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{BENEFIT_LABEL[item.type].toUpperCase()}</span><h3 className="mt-3 font-semibold">{item.name}</h3><p className="mt-1 text-xs text-muted-foreground">{item.type==='welfare'&&item.welfareCategory?WELFARE_LABEL[item.welfareCategory]:item.issuer||'Gestore non indicato'}</p></div><div className="flex gap-3"><EditButton onClick={()=>edit(item)} label="Modifica benefit"/><button onClick={()=>removeBenefit(item)}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></div>
+        <div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-secondary/60 p-3"><p className="text-xs text-muted-foreground">Saldo disponibile</p><p className="mt-1 text-xl font-semibold">{money.format(item.balance)}</p></div><div className="rounded-xl bg-secondary/60 p-3"><p className="text-xs text-muted-foreground">Scadenza</p><p className={`mt-1 text-sm font-semibold ${expired?'text-destructive':''}`}>{item.expiryDate?dateFullIt(item.expiryDate):'Non indicata'}</p></div></div>
+        {item.accreditMode!=='none'&&<div className={`mt-3 rounded-xl border p-3 ${creditedThisMonth?'border-green-500/30 bg-green-50 dark:bg-green-950/20':'border-amber-500/30 bg-amber-50 dark:bg-amber-950/20'}`}><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold">{creditedThisMonth?'Accredito del mese registrato':'Accredito mensile da confermare'}</p><p className="mt-1 text-xs text-muted-foreground">Giorno {item.creditDay??1}{planned?` · previsto ${money.format(planned)}`:item.accreditMode==='variable'?' · importo variabile':''}</p></div>{!creditedThisMonth&&<button onClick={()=>{setMovementId(item.id);setMovementType('topup')}} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground">Conferma</button>}</div></div>}
+        {last&&<div className="mt-3 flex items-center gap-2 border-t pt-3 text-xs"><span className="min-w-0 flex-1 text-muted-foreground">Ultimo: {last.type==='spend'?'Utilizzo':'Accredito'} · {dateIt(last.date)}{last.description?` · ${last.description}`:last.note?` · ${last.note}`:''}</span><b className={last.type==='spend'?'text-destructive':'text-green-600'}>{last.type==='spend'?'-':'+'}{money.format(last.amount)}</b><button onClick={()=>undoLast(item)} className="text-primary">Annulla</button></div>}
+        <div className="mt-3 flex gap-2"><button onClick={()=>{setMovementId(item.id);setMovementType('spend')}} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Registra spesa</button><button onClick={()=>{setMovementId(item.id);setMovementType('topup')}} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Registra accredito</button></div>
+        {movementId===item.id&&<form onSubmit={addMovement} className="mt-3 grid gap-3 border-t pt-3 sm:grid-cols-2"><p className="col-span-full text-sm font-semibold">{movementType==='spend'?'Spesa pagata con questo benefit':'Accredito del benefit'}</p><Field label="Data"><input name="date" type="date" required defaultValue={today}/></Field>{movementType==='topup'&&<Field label="Origine"><select name="source" defaultValue="employer"><option value="employer">Datore di lavoro</option><option value="personal">Acquisto personale</option><option value="adjustment">Rettifica saldo</option></select></Field>}{movementType==='topup'&&item.accreditMode==='meal_count'?<Field label="Numero buoni accreditati"><input name="mealCount" type="number" min="1" required defaultValue={item.expectedMealCount}/></Field>:<Field label="Importo (€)"><input name="amount" type="number" min=".01" step=".01" required defaultValue={movementType==='topup'?planned:undefined}/></Field>}<Field label={movementType==='spend'?'Descrizione':'Descrizione (facoltativa)'}><input name="description" required={movementType==='spend'} placeholder={movementType==='spend'?'Es. Pranzo, benzina...':'Es. Accredito agosto'}/></Field>{movementType==='spend'&&<Field label="Categoria"><input name="category" list="benefit-expense-categories" required placeholder="Es. Ristorazione, Carburante..."/><datalist id="benefit-expense-categories">{s.categories.map(category=><option key={category.id} value={category.name}/>)}</datalist></Field>}<Field label="Note"><input name="note" placeholder="Facoltativo"/></Field><div className="flex items-end gap-2"><button className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">Salva</button><button type="button" onClick={()=>setMovementId(null)} className="h-10 rounded-xl border px-3 text-sm">Annulla</button></div></form>}
+      </Card>
+    })}{!s.benefits.length&&<Card className="md:col-span-2"><p className="py-5 text-center text-sm text-muted-foreground">Nessun benefit registrato.</p></Card>}</div>
+  </section>
 }
 
 // ── FINANZIAMENTI ──
