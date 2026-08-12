@@ -172,6 +172,38 @@ export function installmentSchedule(startDate: string, freq: Freq, installmentCo
   }))
 }
 
+export function remainingInstallmentCount(residualAmount: number, paymentAmount: number) {
+  if (residualAmount <= 0 || paymentAmount <= 0) return 0
+  return Math.ceil(residualAmount / paymentAmount)
+}
+
+export function nextInstallmentDate(startDate: string, freq: Freq, asOfDate = isoDate(new Date())) {
+  if (!startDate) return ''
+  const start = new Date(`${startDate}T12:00:00`)
+  if (Number.isNaN(start.getTime())) return ''
+  for (let index = 0; index < 2400; index += 1) {
+    const date = isoDate(addInstallmentInterval(start, freq, index))
+    if (date >= asOfDate) return date
+  }
+  return ''
+}
+
+export function residualInstallmentSchedule(
+  startDate: string,
+  freq: Freq,
+  residualAmount: number,
+  paymentAmount: number,
+  asOfDate = isoDate(new Date())
+) {
+  const installmentCount = remainingInstallmentCount(residualAmount, paymentAmount)
+  const nextDate = nextInstallmentDate(startDate, freq, asOfDate)
+  if (!nextDate || installmentCount <= 0) return []
+  return installmentSchedule(nextDate, freq, installmentCount).map((installment, index) => ({
+    ...installment,
+    amount: Math.min(paymentAmount, Math.max(0, residualAmount - paymentAmount * index))
+  }))
+}
+
 export function installmentProgress(startDate: string, freq: Freq, installmentCount: number, asOfDate = isoDate(new Date())) {
   const endDate = installmentEndDate(startDate, freq, installmentCount)
   if (!startDate || !endDate || installmentCount <= 0) {
@@ -240,7 +272,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         totalRepayable: financing.totalRepayable ?? financing.originalAmount,
         installmentCount,
         startDate,
-        endDate: financing.endDate ?? installmentEndDate(startDate, financing.freq, installmentCount)
+        endDate: residualInstallmentSchedule(startDate, financing.freq, financing.residualAmount, financing.paymentAmount).at(-1)?.date ?? financing.endDate ?? installmentEndDate(startDate, financing.freq, installmentCount)
       }
     }),
     simulations: (v.simulations ?? []).map(simulation => {
@@ -276,7 +308,7 @@ export function totals(s: BudgetState, y: number) {
   const liquidity = s.accounts.reduce((n, a) => n + a.balance, 0)
   const assets = s.assets.reduce((n, a) => n + a.value, 0)
   const financingDebt = s.financings.reduce((n, financing) => n + Math.max(0, financing.residualAmount), 0)
-  const monthlyFinancing = s.financings.reduce((n, financing) => n + toMensile(financing.paymentAmount, financing.freq), 0)
+  const monthlyFinancing = s.financings.filter(financing => financing.residualAmount > 0).reduce((n, financing) => n + toMensile(financing.paymentAmount, financing.freq), 0)
   const mensileSpese = s.expenses.filter(e => (e.recurring || e.subscription) && !['finanziario','assicurativo','risparmio'].includes(e.category))
     .reduce((n, e) => n + toMensile(e.amount, e.freq), 0)
   const totalMonthlyExpenses = mensileSpese + monthlyFinancing
