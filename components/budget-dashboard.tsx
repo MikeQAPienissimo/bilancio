@@ -305,7 +305,7 @@ const FreqSelect = ({name,value,onChange}:{name?:string;value?:Freq;onChange?:(v
 function Dashboard({s,year}:{s:BudgetState;year:number}) {
   const t = totals(s,year), m = monthlyData(s,year)
   const cats = s.categories.map(c=>({name:c.name,value:t.expenses.filter(e=>e.category===c.name).reduce((n,e)=>n+e.amount,0)})).filter(x=>x.value)
-  const limPerc = t.limiteAttivo<Infinity ? Math.min(100,t.usatoLimite*100) : null
+  const limPerc = (t.limiteAttivo<Infinity && t.limiteAttivo>0 && !isNaN(t.usatoLimite)) ? Math.min(100,t.usatoLimite*100) : null
   return (
     <div className="flex flex-col gap-7">
       <Heading kicker="PANORAMICA" title="Il quadro è sotto controllo." text="Liquidità, patrimonio e flussi in un unico posto."/>
