@@ -97,6 +97,26 @@ export type SavingsGoal = {
   currentAmount: number
   targetDate?: string
 }
+export type BenefitType = 'meal' | 'welfare' | 'fuel'
+export type WelfareCategory = 'shopping' | 'health' | 'education' | 'transport' | 'care' | 'sport' | 'culture' | 'travel' | 'pension' | 'other'
+export type BenefitTransaction = {
+  id: string
+  date: string
+  type: 'topup' | 'spend'
+  amount: number
+  note?: string
+}
+export type BenefitWallet = {
+  id: string
+  name: string
+  type: BenefitType
+  welfareCategory?: WelfareCategory
+  issuer?: string
+  balance: number
+  expiryDate?: string
+  notes?: string
+  transactions: BenefitTransaction[]
+}
 export type DashboardPreferences = {
   forecast: boolean
   alerts: boolean
@@ -120,6 +140,7 @@ export type BudgetState = {
   financings: Financing[]
   simulations: Simulation[]
   goals: SavingsGoal[]
+  benefits: BenefitWallet[]
   dashboard: DashboardPreferences
   limiteSpesa: LimiteSpesa
 }
@@ -288,7 +309,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 7,
+    version: 8,
     profile: {
       name: '',
       ateco: '',
@@ -305,6 +326,7 @@ export function createEmptyState(): BudgetState {
     financings: [],
     simulations: [],
     goals: [],
+    benefits: [],
     dashboard: { forecast: true, alerts: true, goals: true, subscriptions: true, charts: true },
     incomes: [],
     expenses: []
@@ -319,7 +341,7 @@ export const uid = () => crypto.randomUUID()
 export function migrate(v: Partial<BudgetState>): BudgetState {
   const empty = createEmptyState()
   return {
-    ...empty, ...v, version: 7,
+    ...empty, ...v, version: 8,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -346,6 +368,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
       return { ...migrated, endDate: financingInstallmentSchedule(migrated).at(-1)?.date ?? migrated.endDate }
     }),
     goals: v.goals ?? [],
+    benefits: (v.benefits ?? []).map(benefit => ({ ...benefit, transactions: benefit.transactions ?? [] })),
     dashboard: { ...empty.dashboard, ...v.dashboard },
     simulations: (v.simulations ?? []).map(simulation => {
       const installmentCount = simulation.installmentCount ?? Math.max(0, simulation.durationMonths ?? 0)
