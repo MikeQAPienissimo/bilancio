@@ -162,18 +162,27 @@ export function installmentEndDate(startDate: string, freq: Freq, installmentCou
   return isoDate(addInstallmentInterval(start, freq, Math.max(0, installmentCount - 1)))
 }
 
+export function installmentSchedule(startDate: string, freq: Freq, installmentCount: number) {
+  if (!startDate || installmentCount <= 0) return []
+  const start = new Date(`${startDate}T12:00:00`)
+  if (Number.isNaN(start.getTime())) return []
+  return Array.from({ length: installmentCount }, (_, index) => ({
+    number: index + 1,
+    date: isoDate(addInstallmentInterval(start, freq, index))
+  }))
+}
+
 export function installmentProgress(startDate: string, freq: Freq, installmentCount: number, asOfDate = isoDate(new Date())) {
   const endDate = installmentEndDate(startDate, freq, installmentCount)
   if (!startDate || !endDate || installmentCount <= 0) {
     return { paid: 0, remaining: Math.max(0, installmentCount), nextDate: '', endDate }
   }
-  const start = new Date(`${startDate}T12:00:00`)
+  const schedule = installmentSchedule(startDate, freq, installmentCount)
   let paid = 0
   let nextDate = ''
-  for (let index = 0; index < installmentCount; index += 1) {
-    const dueDate = isoDate(addInstallmentInterval(start, freq, index))
-    if (dueDate <= asOfDate) paid += 1
-    else if (!nextDate) nextDate = dueDate
+  for (const installment of schedule) {
+    if (installment.date <= asOfDate) paid += 1
+    else if (!nextDate) nextDate = installment.date
   }
   return { paid, remaining: Math.max(0, installmentCount - paid), nextDate, endDate }
 }
