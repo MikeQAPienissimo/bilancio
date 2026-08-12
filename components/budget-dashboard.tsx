@@ -2,13 +2,13 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ArrowDownLeft, BadgeEuro, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Pencil, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
-import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, Simulation, SimulationType, createEmptyState, dateFullIt, dateIt, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, patrimoniTotals, remainingInstallmentCount, residualInstallmentSchedule, toMensile, totals, uid } from '@/lib/budget'
+import { ArrowDownLeft, BadgeEuro, Bell, BrainCircuit, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronRight, ChevronLeft, CircleDollarSign, FileUp, Landmark, LayoutDashboard, LogOut, Pencil, PiggyBank, Plus, Repeat2, RotateCcw, Save, Settings2, Target, Trash2, WalletCards } from 'lucide-react'
+import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, ResidualMode, SavingsGoal, Simulation, SimulationType, createEmptyState, dateFullIt, dateIt, financingInstallmentSchedule, financingPrincipalReduction, financingRemainingInstallments, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, nextInstallmentAfter, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-type View = 'dashboard'|'movimenti'|'conti'|'budget'|'patrimonio'|'finanziamenti'|'piva'|'scadenze'|'previsioni'|'advisor'|'setup'
+type View = 'dashboard'|'movimenti'|'conti'|'budget'|'patrimonio'|'finanziamenti'|'abbonamenti'|'obiettivi'|'piva'|'scadenze'|'previsioni'|'advisor'|'setup'
 const nav = [
   ['dashboard','Dashboard',LayoutDashboard],
   ['movimenti','Movimenti',ArrowDownLeft],
@@ -16,6 +16,8 @@ const nav = [
   ['budget','Budget',CircleDollarSign],
   ['patrimonio','Patrimonio',Landmark],
   ['finanziamenti','Finanziamenti',BadgeEuro],
+  ['abbonamenti','Abbonamenti',Repeat2],
+  ['obiettivi','Obiettivi',Target],
   ['piva','P.IVA',BriefcaseBusiness],
   ['scadenze','Scadenze',CalendarDays],
   ['previsioni','Previsioni',CalendarDays],
@@ -181,8 +183,9 @@ DATI FINANZIARI (${year}):
 - Limite mensile: ${t.limiteAttivo < Infinity ? money.format(t.limiteAttivo)+'/mese ('+Math.round(t.usatoLimite*100)+'% usato)' : 'nessuno'}
 - Investimenti: versato ${money.format(pat.totVersato)}, valore ${money.format(pat.totValore)}, rendimento ${money.format(pat.rend)}
 - P.IVA: fatturato ${money.format(t.pivaIncome)}, tasse stimate ${money.format(t.tax+t.contributions)}, accantonato ${money.format(t.reserve)}
-- Finanziamenti: ${state.financings.map(f=>`${f.name}, residuo ${money.format(f.residualAmount)}, rata ${money.format(toMensile(f.paymentAmount,f.freq))}/mese, ${remainingInstallmentCount(f.residualAmount,f.paymentAmount)} rate mancanti`).join('; ') || 'nessuno'}
+- Finanziamenti: ${state.financings.map(f=>`${f.name}, residuo ${money.format(f.residualAmount)} (${f.residualMode==='principal'?'solo capitale':'totale dovuto'}), rata ${money.format(toMensile(f.paymentAmount,f.freq))}/mese, ${financingRemainingInstallments(f)} rate mancanti`).join('; ') || 'nessuno'}
 - Abbonamenti: ${state.expenses.filter(e=>e.subscription).map(e=>`${e.description} ${money.format(toMensile(e.amount,e.freq))}/mese`).join('; ') || 'nessuno'}
+- Obiettivi: ${state.goals.map(g=>`${g.name}: ${money.format(g.currentAmount)} di ${money.format(g.targetAmount)}`).join('; ') || 'nessuno'}
 - Spese principali: ${state.expenses.slice(0,6).map(e=>`${e.description} ${money.format(e.amount)} (${FREQ_LABEL[e.freq]})`).join(', ')}`
   }
 
@@ -269,6 +272,8 @@ DATI FINANZIARI (${year}):
           {view==='budget' && <Budgets s={state} set={setState} year={year}/>}
           {view==='patrimonio' && <Assets s={state} set={setState}/>}
           {view==='finanziamenti' && <Financings s={state} set={setState} onOpenDeadlines={()=>setView('scadenze')}/>}
+          {view==='abbonamenti' && <Subscriptions s={state} set={setState} onOpenMovements={()=>setView('movimenti')}/>}
+          {view==='obiettivi' && <Goals s={state} set={setState} year={year}/>}
           {view==='piva' && <Piva s={state} year={year}/>}
           {view==='scadenze' && <Deadlines s={state} set={setState}/>}
           {view==='previsioni' && <Previsioni s={state} set={setState}/>}
@@ -351,10 +356,14 @@ const Gauge = ({label,value,detail,invert=false}:{label:string;value:number;deta
 function Dashboard({s,year}:{s:BudgetState;year:number}) {
   const t = totals(s,year), m = monthlyData(s,year)
   const today=new Date().toISOString().slice(0,10)
+  const addDays=(days:number)=>{const value=new Date(`${today}T12:00:00`);value.setDate(value.getDate()+days);return value.toISOString().slice(0,10)}
   const categoryNames=[...new Set(t.expenses.map(expense=>expense.category||'Senza categoria'))]
   const cats = categoryNames.map(name=>({name,value:t.expenses.filter(e=>e.category===name).reduce((n,e)=>n+e.amount,0)})).filter(x=>x.value).sort((a,b)=>b.value-a.value)
   const limPerc = (t.limiteAttivo<Infinity && t.limiteAttivo>0 && !isNaN(t.usatoLimite)) ? Math.min(100,t.usatoLimite*100) : null
-  const monthlyIncome=t.totalIncome/12
+  const recurringIncome=s.incomes.filter(item=>item.recurring).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
+  const monthlyIncome=recurringIncome>0?recurringIncome:t.totalIncome/12
+  const recurringPiva=s.incomes.filter(item=>item.recurring&&item.kind==='piva').reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
+  const monthlyMargin=monthlyIncome-t.mensileSpese-recurringPiva*s.profile.taxReserve/100
   const savingsRate=monthlyIncome>0?(monthlyIncome-t.mensileSpese)/monthlyIncome*100:0
   const debtRatio=monthlyIncome>0?t.monthlyFinancing/monthlyIncome*100:0
   const fiscalDue=t.tax+t.contributions
@@ -362,6 +371,17 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
   const budgetUsage=limPerc??0
   const openSubscriptions=s.expenses.filter(expense=>expense.subscription&&!expense.subscription.endDate&&isActiveAt(expense.subscription.startDate,null,today))
   const monthlySubscriptions=openSubscriptions.reduce((total,expense)=>total+toMensile(expense.amount,expense.freq),0)
+  const forecast=[30,60,90].map(days=>{
+    const end=addDays(days)
+    const oneOff=s.deadlines.filter(item=>!item.paid&&item.date>=today&&item.date<=end).reduce((total,item)=>total+item.amount,0)
+    return {days,value:t.liquidity+monthlyMargin*(days/30)-oneOff}
+  })
+  const alerts=[
+    ...s.deadlines.filter(item=>!item.paid&&item.date<=addDays(7)).map(item=>({id:`d-${item.id}`,date:item.date,title:item.title,detail:item.date<today?'Scaduta':item.date===today?'Scade oggi':'Entro 7 giorni',amount:item.amount,urgent:item.date<=today})),
+    ...s.financings.flatMap(item=>financingInstallmentSchedule(item).slice(0,1).filter(rate=>rate.date<=addDays(7)).map(rate=>({id:`f-${item.id}`,date:rate.date,title:`Rata ${item.name}`,detail:rate.date<today?'Scaduta':rate.date===today?'Scade oggi':'Entro 7 giorni',amount:rate.amount,urgent:rate.date<=today}))),
+    ...s.expenses.filter(item=>item.subscription?.endDate&&item.subscription.endDate>=today&&item.subscription.endDate<=addDays(30)).map(item=>({id:`s-${item.id}`,date:item.subscription!.endDate!,title:`Termina ${item.description}`,detail:'Abbonamento in scadenza',amount:item.amount,urgent:false}))
+  ].sort((a,b)=>a.date.localeCompare(b.date))
+  const topGoals=[...s.goals].sort((a,b)=>(b.targetAmount?b.currentAmount/b.targetAmount:0)-(a.targetAmount?a.currentAmount/a.targetAmount:0)).slice(0,3)
   return (
     <div className="flex flex-col gap-7">
       <Heading kicker="PANORAMICA" title="Il quadro è sotto controllo." text="Liquidità, patrimonio e flussi in un unico posto."/>
@@ -375,13 +395,46 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
         </Card>
         <Metric label="Riserva fiscale P.IVA" value={t.reserve} detail={`Tasse stimate: ${money.format(t.tax+t.contributions)}`}/>
       </div>
-      <Card><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary">COSTI CONTINUI</p><h3 className="mt-2 text-lg font-semibold">Abbonamenti senza scadenza</h3><p className="mt-1 text-sm text-muted-foreground">Restano nel riepilogo mensile finché non imposti una data di fine.</p></div><div className="rounded-xl bg-primary/10 px-4 py-3 text-right"><p className="text-xs text-primary">Impatto mensile</p><p className="mt-1 text-2xl font-semibold text-primary">{money.format(monthlySubscriptions)}</p><p className="text-xs text-muted-foreground">{money.format(monthlySubscriptions*12)} su 12 mesi</p></div></div>{openSubscriptions.length?<div className="mt-4 grid gap-2 border-t pt-4 md:grid-cols-2">{openSubscriptions.slice(0,6).map(expense=><div key={expense.id} className="flex items-center justify-between gap-3 rounded-xl bg-secondary/60 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">{expense.description}</p><p className="text-xs text-muted-foreground">{expense.category||'Senza categoria'} · {FREQ_LABEL[expense.freq]}</p></div><b className="text-sm">{money.format(toMensile(expense.amount,expense.freq))}/mese</b></div>)}</div>:<p className="mt-4 border-t pt-4 text-sm text-muted-foreground">Nessun abbonamento attivo senza scadenza.</p>}</Card>
-      <section className="flex flex-col gap-4"><div><h3 className="text-xl font-semibold">Grafici e indicatori</h3><p className="text-sm text-muted-foreground">Flussi, composizione delle spese e rapporti chiave aggiornati con i dati inseriti.</p></div><div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
+      {s.dashboard.forecast&&<section><div className="mb-3"><h3 className="text-xl font-semibold">Previsione di liquidità</h3><p className="text-sm text-muted-foreground">Stima a 30, 60 e 90 giorni basata sui flussi ricorrenti e sulle scadenze manuali.</p></div><div className="grid gap-4 sm:grid-cols-3">{forecast.map(item=><Metric key={item.days} label={`Tra ${item.days} giorni`} value={item.value} detail={`Margine stimato ${money.format(monthlyMargin)}/mese`} warn={item.value<0}/>)}</div></section>}
+      {s.dashboard.alerts&&<Card><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><Bell className="size-5"/></div><div><h3 className="font-semibold">Avvisi e prossimi pagamenti</h3><p className="text-sm text-muted-foreground">Rate e scadenze che richiedono attenzione.</p></div></div>{alerts.length?<div className="mt-4 divide-y">{alerts.slice(0,6).map(item=><div key={item.id} className="flex items-center gap-3 py-3"><div className={`size-2 rounded-full ${item.urgent?'bg-destructive':'bg-amber-500'}`}/><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{item.title}</p><p className="text-xs text-muted-foreground">{dateFullIt(item.date)} · {item.detail}</p></div><b className="text-sm">{money.format(item.amount)}</b></div>)}</div>:<p className="mt-4 rounded-xl bg-secondary/60 p-4 text-sm text-muted-foreground">Nessuna urgenza nei prossimi giorni.</p>}</Card>}
+      {s.dashboard.subscriptions&&<Card><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary">COSTI CONTINUI</p><h3 className="mt-2 text-lg font-semibold">Abbonamenti senza scadenza</h3><p className="mt-1 text-sm text-muted-foreground">Restano nel riepilogo mensile finché non imposti una data di fine.</p></div><div className="rounded-xl bg-primary/10 px-4 py-3 text-right"><p className="text-xs text-primary">Impatto mensile</p><p className="mt-1 text-2xl font-semibold text-primary">{money.format(monthlySubscriptions)}</p><p className="text-xs text-muted-foreground">{money.format(monthlySubscriptions*12)} su 12 mesi</p></div></div>{openSubscriptions.length?<div className="mt-4 grid gap-2 border-t pt-4 md:grid-cols-2">{openSubscriptions.slice(0,6).map(expense=><div key={expense.id} className="flex items-center justify-between gap-3 rounded-xl bg-secondary/60 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">{expense.description}</p><p className="text-xs text-muted-foreground">{expense.category||'Senza categoria'} · {FREQ_LABEL[expense.freq]}</p></div><b className="text-sm">{money.format(toMensile(expense.amount,expense.freq))}/mese</b></div>)}</div>:<p className="mt-4 border-t pt-4 text-sm text-muted-foreground">Nessun abbonamento attivo senza scadenza.</p>}</Card>}
+      {s.dashboard.goals&&<Card><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><Target className="size-5"/></div><div><h3 className="font-semibold">Obiettivi di risparmio</h3><p className="text-sm text-muted-foreground">Avanzamento dei tuoi traguardi principali.</p></div></div>{topGoals.length?<div className="mt-4 grid gap-3 md:grid-cols-3">{topGoals.map(goal=>{const progress=goal.targetAmount>0?Math.min(100,goal.currentAmount/goal.targetAmount*100):0;return <div key={goal.id} className="rounded-xl bg-secondary/60 p-3"><div className="flex justify-between gap-2 text-sm"><b className="truncate">{goal.name}</b><span>{progress.toFixed(0)}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-background"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div><p className="mt-2 text-xs text-muted-foreground">{money.format(goal.currentAmount)} di {money.format(goal.targetAmount)}</p></div>})}</div>:<p className="mt-4 rounded-xl bg-secondary/60 p-4 text-sm text-muted-foreground">Nessun obiettivo impostato.</p>}</Card>}
+      {s.dashboard.charts&&<section className="flex flex-col gap-4"><div><h3 className="text-xl font-semibold">Grafici e indicatori</h3><p className="text-sm text-muted-foreground">Flussi, composizione delle spese e rapporti chiave aggiornati con i dati inseriti.</p></div><div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
         <Card><h3 className="font-semibold">Entrate e spese per mese</h3><p className="text-sm text-muted-foreground">Confronto a colonne · {year}</p><div className="mt-4 h-64"><ResponsiveContainer><BarChart data={m} barGap={4}><CartesianGrid vertical={false} stroke="var(--border)"/><XAxis dataKey="month" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip formatter={v=>money.format(Number(v))}/><Bar dataKey="entrate" name="Entrate" fill="var(--chart-1)" radius={[5,5,0,0]}/><Bar dataKey="spese" name="Spese" fill="var(--chart-2)" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></Card>
         <Card><h3 className="font-semibold">Spese per categoria</h3>{cats.length?<><div className="h-44"><ResponsiveContainer><PieChart><Pie data={cats} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72}>{cats.map((_,i)=><Cell key={i} fill={`var(--chart-${i%5+1})`}/>)}</Pie><Tooltip formatter={v=>money.format(Number(v))}/></PieChart></ResponsiveContainer></div>{cats.slice(0,5).map(x=><div key={x.name} className="flex justify-between py-1 text-sm"><span className="text-muted-foreground">{x.name}</span><b>{money.format(x.value)}</b></div>)}</>:<p className="grid h-56 place-items-center text-sm text-muted-foreground">Inserisci delle spese per vedere la composizione.</p>}</Card>
-      </div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Gauge label="Tasso di risparmio" value={savingsRate} detail={`${money.format(Math.max(0,monthlyIncome-t.mensileSpese))} potenziali al mese`}/><Gauge label="Peso delle rate" value={debtRatio} detail={`${money.format(t.monthlyFinancing)} su ${money.format(monthlyIncome)}/mese`} invert/><Gauge label="Copertura fiscale" value={reserveCoverage} detail={`${money.format(t.reserve)} accantonati`}/><Gauge label="Uso limite spesa" value={budgetUsage} detail={limPerc===null?'Limite non impostato':`${money.format(t.mensileSpese)} di ${money.format(t.limiteAttivo)}`} invert/></div></section>
+      </div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Gauge label="Tasso di risparmio" value={savingsRate} detail={`${money.format(Math.max(0,monthlyIncome-t.mensileSpese))} potenziali al mese`}/><Gauge label="Peso delle rate" value={debtRatio} detail={`${money.format(t.monthlyFinancing)} su ${money.format(monthlyIncome)}/mese`} invert/><Gauge label="Copertura fiscale" value={reserveCoverage} detail={`${money.format(t.reserve)} accantonati`}/><Gauge label="Uso limite spesa" value={budgetUsage} detail={limPerc===null?'Limite non impostato':`${money.format(t.mensileSpese)} di ${money.format(t.limiteAttivo)}`} invert/></div></section>}
     </div>
   )
+}
+
+function parseCsvLine(line:string,delimiter:string) {
+  const values:string[]=[]
+  let value='',quoted=false
+  for(let index=0;index<line.length;index+=1){const char=line[index];if(char==='"'){if(quoted&&line[index+1]==='"'){value+='"';index+=1}else quoted=!quoted}else if(char===delimiter&&!quoted){values.push(value.trim());value=''}else value+=char}
+  values.push(value.trim())
+  return values
+}
+
+function normalizeCsvHeader(value:string) {
+  return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'')
+}
+
+function parseCsvAmount(value:string) {
+  const cleaned=value.replace(/[^0-9,.-]/g,'')
+  if(!cleaned)return NaN
+  const comma=cleaned.lastIndexOf(','),dot=cleaned.lastIndexOf('.')
+  if(comma>=0&&dot>=0){const decimal=comma>dot?',':'.';return Number(cleaned.replace(decimal===','?/\./g:/,/g,'').replace(decimal, '.'))}
+  if(comma>=0)return Number(cleaned.replace(/\./g,'').replace(',','.'))
+  return Number(cleaned)
+}
+
+function parseCsvDate(value:string) {
+  const trimmed=value.trim()
+  if(/^\d{4}-\d{2}-\d{2}/.test(trimmed))return trimmed.slice(0,10)
+  const match=trimmed.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/)
+  if(!match)return ''
+  const year=match[3].length===2?`20${match[3]}`:match[3]
+  return `${year}-${match[2].padStart(2,'0')}-${match[1].padStart(2,'0')}`
 }
 
 // ── MOVIMENTI ──
@@ -391,6 +444,7 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
   const [isSubscription,setIsSubscription] = useState(false)
   const [openEnded,setOpenEnded] = useState(false)
   const [editing,setEditing] = useState<{type:'income';item:Income}|{type:'expense';item:Expense}|null>(null)
+  const [csvMsg,setCsvMsg]=useState('')
   const editItem=editing?.item
   const editExpense=editing?.type==='expense'?editing.item:undefined
   const resetForm=()=>{setEditing(null);setFreq('mensile');setIsSubscription(false);setOpenEnded(false);setMode('spesa')}
@@ -427,12 +481,46 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
   const sum=(items:{amount:number}[])=>items.reduce((total,item)=>total+item.amount,0)
   const removeIncome=(id:string)=>set(x=>({...x,incomes:x.incomes.filter(item=>item.id!==id)}))
   const removeExpense=(id:string)=>set(x=>({...x,expenses:x.expenses.filter(item=>item.id!==id)}))
+  const importCsv=async(file:File)=>{
+    const text=await file.text()
+    const lines=text.replace(/^\uFEFF/,'').split(/\r?\n/).filter(line=>line.trim())
+    if(lines.length<2){setCsvMsg('Il CSV non contiene righe da importare.');return}
+    const delimiter=(lines[0].match(/;/g)?.length??0)>(lines[0].match(/,/g)?.length??0)?';':','
+    const headers=parseCsvLine(lines[0],delimiter).map(normalizeCsvHeader)
+    const find=(aliases:string[])=>headers.findIndex(header=>aliases.includes(header))
+    const indexes={date:find(['data','date','datacontabile','datavaluta']),description:find(['descrizione','description','causale','nome']),amount:find(['importo','amount','valore']),type:find(['tipo','type','operazione']),kind:find(['ambito','kind','natura']),category:find(['categoria','category']),account:find(['conto','account'])}
+    if(indexes.date<0||indexes.description<0||indexes.amount<0){setCsvMsg('Servono almeno le colonne Data, Descrizione/Causale e Importo.');return}
+    let imported=0,skipped=0
+    set(current=>{
+      const incomes=[...current.incomes],expenses=[...current.expenses]
+      const known=new Set([...incomes.map(item=>`i|${item.date}|${item.description.toLowerCase()}|${item.amount.toFixed(2)}`),...expenses.map(item=>`e|${item.date}|${item.description.toLowerCase()}|${item.amount.toFixed(2)}`)])
+      for(const line of lines.slice(1)){
+        const row=parseCsvLine(line,delimiter)
+        const date=parseCsvDate(row[indexes.date]??''),description=(row[indexes.description]??'').trim(),rawAmount=parseCsvAmount(row[indexes.amount]??'')
+        if(!date||!description||!Number.isFinite(rawAmount)||rawAmount===0){skipped+=1;continue}
+        const explicit=(indexes.type>=0?row[indexes.type]:'').toLowerCase()
+        const isExpense=/spesa|expense|addebito|uscita|debit/.test(explicit)||(!/entrata|income|accredito|credit/.test(explicit)&&rawAmount<0)
+        const amount=Math.abs(rawAmount),key=`${isExpense?'e':'i'}|${date}|${description.toLowerCase()}|${amount.toFixed(2)}`
+        if(known.has(key)){skipped+=1;continue}
+        const kindText=indexes.kind>=0?(row[indexes.kind]??'').toLowerCase():''
+        const kind:Kind=kindText.includes('piva')||kindText.includes('iva')?'piva':'personale'
+        const accountName=indexes.account>=0?(row[indexes.account]??'').trim().toLowerCase():''
+        const accountId=current.accounts.find(account=>account.name.toLowerCase()===accountName)?.id
+        if(isExpense)expenses.unshift({id:uid(),date,description,amount,kind,accountId,recurring:false,freq:'unica',category:indexes.category>=0?(row[indexes.category]||'Importato'):'Importato'})
+        else incomes.unshift({id:uid(),date,description,amount,kind,accountId,recurring:false,freq:'unica'})
+        known.add(key);imported+=1
+      }
+      return {...current,incomes,expenses}
+    })
+    setCsvMsg(`${imported} movimenti importati${skipped?` · ${skipped} righe saltate o duplicate`:''}.`)
+  }
   const incomeList=(items:Income[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><b className="text-sm">{item.description}</b><p className="text-xs text-muted-foreground">{dateIt(item.date)}{item.recurring&&item.freq?` · ${FREQ_LABEL[item.freq]}`:''}</p></div><b className="text-sm text-green-600">+{money.format(item.amount)}</b><EditButton onClick={()=>editIncome(item)} label="Modifica entrata"/><button onClick={()=>removeIncome(item.id)} aria-label="Elimina entrata"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
   const expenseList=(items:Expense[],empty:string)=><Card className="p-0 overflow-hidden">{items.map(item=><div key={item.id} className="flex items-center gap-3 border-b p-4 last:border-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><b className="text-sm">{item.description}</b>{item.subscription&&<span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">ABBONAMENTO</span>}{item.kind==='piva'&&<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">P.IVA</span>}</div><p className="text-xs text-muted-foreground">{item.category||'Senza categoria'} · {FREQ_LABEL[item.freq]}</p>{item.subscription&&<p className="mt-1 text-xs text-muted-foreground">Inizio: {item.subscription.startDate?dateIt(item.subscription.startDate):'non indicato'} · Fine: {item.subscription.endDate?dateIt(item.subscription.endDate):'senza scadenza'}</p>}</div><b className="text-sm text-destructive">-{money.format(item.amount)}</b><EditButton onClick={()=>editExpenseItem(item)} label="Modifica spesa"/><button onClick={()=>removeExpense(item.id)} aria-label="Elimina spesa"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>)}{!items.length&&<p className="p-6 text-center text-sm text-muted-foreground">{empty}</p>}</Card>
   return (
     <div className="flex flex-col gap-6">
       <Heading kicker="REGISTRO" title="Entrate e spese" text={`Movimenti ${year}, già separati per natura e attività.`}/>
       <div className="grid gap-4 sm:grid-cols-3"><Metric label="Entrate personali" value={sum(personalIncomes)}/><Metric label="Introiti P.IVA" value={sum(pivaIncomes)}/><Metric label="Spese" value={sum(expenses)}/></div>
+      <Card><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="font-semibold">Importa movimenti bancari</h3><p className="mt-1 text-sm text-muted-foreground">CSV con Data, Descrizione o Causale e Importo. Entrate positive e spese negative; i duplicati vengono ignorati.</p>{csvMsg&&<p className="mt-2 text-sm font-semibold text-primary">{csvMsg}</p>}</div><label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-xl border bg-background px-4 text-sm font-semibold hover:bg-secondary"><FileUp className="size-4"/>Scegli CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void importCsv(file);e.currentTarget.value=''}}/></label></div></Card>
       <form key={editItem?.id??'new-movement'} onSubmit={submit} className="grid gap-3 rounded-2xl border bg-card p-5 md:grid-cols-4">
         {editing&&<div className="col-span-full flex items-center justify-between rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary"><span>Stai modificando “{editItem?.description}”</span><button type="button" onClick={resetForm} className="text-xs">Annulla modifica</button></div>}
         <Field label="Operazione"><select value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="spesa">Spesa</option><option value="entrata">Entrata</option></select></Field>
@@ -614,19 +702,23 @@ function Financings({s,set,onOpenDeadlines}:{s:BudgetState;set:React.Dispatch<Re
   const [category,setCategory]=useState<FinancingCategory>('auto')
   const [freq,setFreq]=useState<Freq>('mensile')
   const [interestMode,setInterestMode]=useState<InterestMode>('payment')
+  const [residualMode,setResidualMode]=useState<ResidualMode>('total_due')
   const [originalAmount,setOriginalAmount]=useState(0)
   const [interestRate,setInterestRate]=useState(0)
   const [totalRepayable,setTotalRepayable]=useState(0)
   const [knownPayment,setKnownPayment]=useState(0)
   const [residualAmount,setResidualAmount]=useState<number|null>(null)
   const [installmentCount,setInstallmentCount]=useState(36)
+  const [remainingInstallments,setRemainingInstallments]=useState(36)
   const [startDate,setStartDate]=useState('')
+  const [nextPaymentDate,setNextPaymentDate]=useState('')
   const residual=s.financings.reduce((total,item)=>total+Math.max(0,item.residualAmount),0)
-  const monthly=s.financings.reduce((total,item)=>total+toMensile(item.paymentAmount,item.freq),0)
+  const monthly=s.financings.filter(item=>financingRemainingInstallments(item)>0).reduce((total,item)=>total+toMensile(item.paymentAmount,item.freq),0)
   const calculatedTotal=interestMode==='total'?totalRepayable:interestMode==='payment'?knownPayment*installmentCount:originalAmount
   const previewPayment=installmentAmount(originalAmount,interestMode,interestRate,calculatedTotal,installmentCount,freq,knownPayment)
   const previewResidual=residualAmount===null?originalAmount:residualAmount
-  const previewSchedule=residualInstallmentSchedule(startDate,freq,previewResidual,previewPayment)
+  const previewFinancing:Financing={id:editing?.id??'preview',name:'Anteprima',category,kind:'personale',originalAmount,residualAmount:previewResidual,paymentAmount:previewPayment,freq,interestMode,interestRate,totalRepayable:calculatedTotal,installmentCount,startDate,endDate:'',residualMode,remainingInstallments:residualMode==='principal'?remainingInstallments:0,nextPaymentDate:nextPaymentDate||undefined,payments:editing?.payments??[]}
+  const previewSchedule=financingInstallmentSchedule(previewFinancing)
   const previewEndDate=previewSchedule.at(-1)?.date??''
   const submit=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
@@ -646,14 +738,19 @@ function Financings({s,set,onOpenDeadlines}:{s:BudgetState;set:React.Dispatch<Re
       installmentCount,
       startDate,
       endDate:previewEndDate,
-      accountId:String(f.get('accountId')??'')||undefined
+      accountId:String(f.get('accountId')??'')||undefined,
+      residualMode,
+      remainingInstallments:residualMode==='principal'?remainingInstallments:previewSchedule.length,
+      nextPaymentDate:previewSchedule[0]?.date||nextPaymentDate||undefined,
+      payments:editing?.payments??[]
     }
-    if(!financing.name||financing.originalAmount<=0||financing.paymentAmount<=0||!startDate||installmentCount<=0)return
+    if(!financing.name||financing.originalAmount<=0||financing.paymentAmount<=0||!startDate||installmentCount<=0||(residualMode==='principal'&&remainingInstallments<=0))return
     set(x=>({...x,financings:editing?x.financings.map(item=>item.id===editing.id?financing:item):[financing,...x.financings]}))
     e.currentTarget.reset();resetForm()
   }
-  const resetForm=()=>{setCategory('auto');setFreq('mensile');setInterestMode('payment');setOriginalAmount(0);setInterestRate(0);setTotalRepayable(0);setKnownPayment(0);setResidualAmount(null);setInstallmentCount(36);setStartDate('');setEditing(null);setShowForm(false)}
-  const edit=(item:Financing)=>{setEditing(item);setCategory(item.category);setFreq(item.freq);setInterestMode(item.interestMode);setOriginalAmount(item.originalAmount);setInterestRate(item.interestRate);setTotalRepayable(item.totalRepayable);setKnownPayment(item.paymentAmount);setResidualAmount(item.residualAmount);setInstallmentCount(item.installmentCount);setStartDate(item.startDate);setShowForm(true)}
+  const resetForm=()=>{setCategory('auto');setFreq('mensile');setInterestMode('payment');setResidualMode('total_due');setOriginalAmount(0);setInterestRate(0);setTotalRepayable(0);setKnownPayment(0);setResidualAmount(null);setInstallmentCount(36);setRemainingInstallments(36);setStartDate('');setNextPaymentDate('');setEditing(null);setShowForm(false)}
+  const edit=(item:Financing)=>{setEditing(item);setCategory(item.category);setFreq(item.freq);setInterestMode(item.interestMode);setResidualMode(item.residualMode);setOriginalAmount(item.originalAmount);setInterestRate(item.interestRate);setTotalRepayable(item.totalRepayable);setKnownPayment(item.paymentAmount);setResidualAmount(item.residualAmount);setInstallmentCount(item.installmentCount);setRemainingInstallments(financingRemainingInstallments(item));setStartDate(item.startDate);setNextPaymentDate(item.nextPaymentDate??'');setShowForm(true)}
+  const undoLastPayment=(item:Financing)=>{const payment=item.payments.at(-1);if(!payment||!window.confirm(`Annullare l’ultima rata registrata di ${money.format(payment.amount)}?`))return;set(value=>({...value,expenses:value.expenses.filter(expense=>expense.id!==payment.expenseId),financings:value.financings.map(financing=>financing.id===item.id?{...financing,residualAmount:financing.residualAmount+payment.principalAmount,remainingInstallments:financing.residualMode==='principal'?financing.remainingInstallments+1:financing.remainingInstallments,nextPaymentDate:payment.dueDate,payments:financing.payments.filter(value=>value.id!==payment.id)}:financing)}))}
   return <div className="flex flex-col gap-6">
     <div className="flex flex-wrap items-end justify-between gap-4">
       <Heading kicker="DEBITI E RATE" title="Finanziamenti e mutui" text="Piani rateali ordinati, con prossima rata e calendario automatico nelle Scadenze."/>
@@ -668,35 +765,63 @@ function Financings({s,set,onOpenDeadlines}:{s:BudgetState;set:React.Dispatch<Re
         <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
         <Field label="Conto di addebito"><select name="accountId" defaultValue={editing?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
       </div></section>
-      <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">2. Durata e importi</h4><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">2. Durata e importi</h4><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Field label="Importo finanziato (€)"><input name="originalAmount" type="number" min=".01" step=".01" required value={originalAmount||''} onChange={e=>setOriginalAmount(Number(e.target.value))}/></Field>
-        <Field label="Debito residuo (€)"><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = iniziale" value={residualAmount??''} onChange={e=>setResidualAmount(e.target.value===''?null:Number(e.target.value))}/></Field>
+        <Field label="Che residuo stai inserendo?"><select value={residualMode} onChange={e=>setResidualMode(e.target.value as ResidualMode)}><option value="total_due">Totale ancora da pagare</option><option value="principal">Solo capitale residuo della banca</option></select></Field>
+        <Field label={residualMode==='principal'?'Capitale residuo (€)':'Totale residuo dovuto (€)'}><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = importo iniziale" value={residualAmount??''} onChange={e=>setResidualAmount(e.target.value===''?null:Number(e.target.value))}/></Field>
         <Field label="Numero totale di rate"><input type="number" min="1" max="1200" required value={installmentCount} onChange={e=>setInstallmentCount(Number(e.target.value))}/></Field>
         <Field label="Frequenza rate"><InstallmentFreqSelect value={freq} onChange={setFreq}/></Field>
         <Field label="Data della prima rata"><input type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)}/></Field>
+        <Field label="Prossima rata (facoltativa)"><input type="date" value={nextPaymentDate} onChange={e=>setNextPaymentDate(e.target.value)}/></Field>
+        {residualMode==='principal'&&<Field label="Rate mancanti dichiarate"><input type="number" min="1" max="1200" required value={remainingInstallments} onChange={e=>setRemainingInstallments(Number(e.target.value))}/></Field>}
       </div></section>
       <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">3. Calcolo della rata</h4><div className="grid gap-4 md:grid-cols-2">
         <Field label="Dato disponibile"><select value={interestMode} onChange={e=>setInterestMode(e.target.value as InterestMode)}><option value="payment">Conosco l’importo della rata</option><option value="percentage">Conosco il tasso annuo %</option><option value="total">Conosco il totale da restituire</option></select></Field>
         {interestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={interestRate||''} onChange={e=>setInterestRate(Number(e.target.value))} placeholder="Es. 6,50"/></Field>:interestMode==='total'?<Field label="Totale da restituire (€)"><input type="number" min={originalAmount||.01} step=".01" required value={totalRepayable||''} onChange={e=>setTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>:<Field label="Importo rata (€)"><input type="number" min=".01" step=".01" required value={knownPayment||''} onChange={e=>setKnownPayment(Number(e.target.value))} placeholder="Es. 300"/></Field>}
       </div></section>
-      <div className="grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-2 xl:grid-cols-4"><div><p className="text-xs text-muted-foreground">Rata {interestMode==='payment'?'indicata':'calcolata'}</p><p className="mt-1 text-xl font-semibold">{money.format(previewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Debito residuo usato</p><p className="mt-1 text-xl font-semibold">{money.format(previewResidual)}</p></div><div><p className="text-xs text-muted-foreground">Ultima rata ricalcolata</p><p className="mt-1 font-semibold">{previewEndDate?dateFullIt(previewEndDate):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti dal residuo</p><p className="mt-1 font-semibold text-primary">{previewSchedule.length}</p></div></div>
+      <div className="grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-2 xl:grid-cols-4"><div><p className="text-xs text-muted-foreground">Rata {interestMode==='payment'?'indicata':'calcolata'}</p><p className="mt-1 text-xl font-semibold">{money.format(previewPayment)}</p></div><div><p className="text-xs text-muted-foreground">{residualMode==='principal'?'Capitale residuo':'Totale residuo'}</p><p className="mt-1 text-xl font-semibold">{money.format(previewResidual)}</p></div><div><p className="text-xs text-muted-foreground">Ultima rata stimata</p><p className="mt-1 font-semibold">{previewEndDate?dateFullIt(previewEndDate):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti</p><p className="mt-1 font-semibold text-primary">{previewSchedule.length}</p></div></div>
       <div className="flex flex-wrap gap-3"><button className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Salva finanziamento'}</button><button type="button" onClick={resetForm} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
     </form>}
     <section><div className="mb-3"><h3 className="font-semibold">I tuoi piani rateali</h3><p className="text-sm text-muted-foreground">Una scheda pulita per ogni posizione; le singole rate sono visibili mese per mese in Scadenze.</p></div><div className="grid gap-4 xl:grid-cols-2">{s.financings.map(item=>{
-      const plan=residualInstallmentSchedule(item.startDate,item.freq,item.residualAmount,item.paymentAmount)
+      const plan=financingInstallmentSchedule(item)
       const progress=item.originalAmount>0?Math.min(100,Math.max(0,(item.originalAmount-item.residualAmount)/item.originalAmount*100)):0
       const account=s.accounts.find(value=>value.id===item.accountId)
       return <Card key={item.id} className="overflow-hidden p-0">
         <div className="border-b p-5"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-primary">{FINANCING_LABEL[item.category]}</span><span className="rounded-full bg-secondary px-2.5 py-1 text-[10px] font-semibold">{item.kind==='piva'?'P.IVA':'PERSONALE'}</span></div><h3 className="mt-3 text-lg font-semibold">{item.name}</h3>{account&&<p className="mt-1 text-xs text-muted-foreground">Addebito su {account.name}</p>}</div><div className="flex gap-3"><EditButton onClick={()=>edit(item)} label="Modifica finanziamento"/><button onClick={()=>set(x=>({...x,financings:x.financings.filter(value=>value.id!==item.id)}))} aria-label="Elimina finanziamento"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></div>
-          <div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-xl bg-secondary/70 p-3"><p className="text-xs text-muted-foreground">Debito residuo</p><p className="mt-1 text-xl font-semibold">{money.format(item.residualAmount)}</p></div><div className="rounded-xl bg-primary/10 p-3"><p className="text-xs text-primary">Rata {FREQ_LABEL[item.freq].toLowerCase()}</p><p className="mt-1 text-xl font-semibold text-primary">{money.format(item.paymentAmount)}</p></div></div>
+          <div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-xl bg-secondary/70 p-3"><p className="text-xs text-muted-foreground">{item.residualMode==='principal'?'Capitale residuo':'Totale residuo dovuto'}</p><p className="mt-1 text-xl font-semibold">{money.format(item.residualAmount)}</p></div><div className="rounded-xl bg-primary/10 p-3"><p className="text-xs text-primary">Rata {FREQ_LABEL[item.freq].toLowerCase()}</p><p className="mt-1 text-xl font-semibold text-primary">{money.format(item.paymentAmount)}</p></div></div>
         </div>
-        <div className="p-5"><div className="flex items-end justify-between gap-3"><div><p className="text-xs text-muted-foreground">Debito rimborsato sul finanziato</p><p className="mt-1 text-sm font-semibold">{plan.length} rate mancanti calcolate dal residuo</p></div><p className="text-sm font-semibold text-primary">{progress.toFixed(0)}%</p></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div>
+        <div className="p-5"><div className="flex items-end justify-between gap-3"><div><p className="text-xs text-muted-foreground">Debito rimborsato sul finanziato</p><p className="mt-1 text-sm font-semibold">{plan.length} rate mancanti {item.residualMode==='principal'?'dichiarate':'calcolate dal totale dovuto'}</p></div><p className="text-sm font-semibold text-primary">{progress.toFixed(0)}%</p></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div>
           <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">Prima rata storica</p><p className="mt-1 font-semibold">{item.startDate?dateFullIt(item.startDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Prossima rata prevista</p><p className="mt-1 font-semibold text-primary">{plan[0]?.date?dateFullIt(plan[0].date):'Piano concluso'}</p></div><div><p className="text-xs text-muted-foreground">Fine stimata dal residuo</p><p className="mt-1 font-semibold">{plan.at(-1)?.date?dateFullIt(plan.at(-1)!.date):'—'}</p></div></div>
-          <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">{item.interestMode==='total'?`Totale da restituire ${money.format(item.totalRepayable)}`:item.interestMode==='payment'?`Rata inserita manualmente · Totale piano ${money.format(item.paymentAmount*item.installmentCount)}`:`Tasso annuo ${item.interestRate}% · Totale stimato ${money.format(item.totalRepayable)}`}</p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3"><p className="text-xs text-muted-foreground">{item.interestMode==='total'?`Totale da restituire ${money.format(item.totalRepayable)}`:item.interestMode==='payment'?`Rata inserita manualmente · Totale piano ${money.format(item.paymentAmount*item.installmentCount)}`:`Tasso annuo ${item.interestRate}% · Totale stimato ${money.format(item.totalRepayable)}`}{item.payments.length?` · ${item.payments.length} rate registrate`:''}</p>{item.payments.length>0&&<button onClick={()=>undoLastPayment(item)} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Annulla ultima rata</button>}</div>
         </div>
       </Card>
     })}{!s.financings.length&&<Card className="xl:col-span-2"><p className="text-center text-sm text-muted-foreground">Nessun finanziamento inserito. Quando ne aggiungi uno, le rate compariranno anche nelle Scadenze.</p></Card>}</div></section>
   </div>
+}
+
+// ── ABBONAMENTI ──
+function Subscriptions({s,set,onOpenMovements}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;onOpenMovements:()=>void}) {
+  const today=new Date().toISOString().slice(0,10)
+  const subscriptions=s.expenses.filter(item=>item.subscription)
+  const active=subscriptions.filter(item=>(!item.subscription?.endDate||item.subscription.endDate>today)&&(!item.subscription?.startDate||item.subscription.startDate<=today))
+  const upcoming=subscriptions.filter(item=>item.subscription?.startDate&&item.subscription.startDate>today)
+  const ended=subscriptions.filter(item=>item.subscription?.endDate&&item.subscription.endDate<=today)
+  const monthly=active.reduce((total,item)=>total+toMensile(item.amount,item.freq),0)
+  const updateEnd=(id:string,endDate:string|null)=>set(value=>({...value,expenses:value.expenses.map(item=>item.id===id?{...item,recurring:true,subscription:{...item.subscription,endDate}}:item)}))
+  const list=(items:Expense[],status:'active'|'upcoming'|'ended')=><div className="grid gap-3 md:grid-cols-2">{items.map(item=><Card key={item.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{item.description}</h3><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${status==='active'?'bg-green-100 text-green-700':status==='upcoming'?'bg-amber-100 text-amber-700':'bg-secondary text-muted-foreground'}`}>{status==='active'?'ATTIVO':status==='upcoming'?'PROGRAMMATO':'CONCLUSO'}</span></div><p className="mt-1 text-xs text-muted-foreground">{item.category||'Senza categoria'} · {FREQ_LABEL[item.freq]}</p></div><b>{money.format(toMensile(item.amount,item.freq))}/mese</b></div><div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-secondary/60 p-3 text-xs"><div><p className="text-muted-foreground">Inizio</p><p className="mt-1 font-semibold">{item.subscription?.startDate?dateFullIt(item.subscription.startDate):'Non indicato'}</p></div><div><p className="text-muted-foreground">Fine</p><p className="mt-1 font-semibold">{item.subscription?.endDate?dateFullIt(item.subscription.endDate):'Non definita'}</p></div></div><div className="mt-3 flex flex-wrap gap-2">{status!=='ended'?<button onClick={()=>updateEnd(item.id,today)} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Termina oggi</button>:<button onClick={()=>updateEnd(item.id,null)} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Riattiva</button>}<button onClick={onOpenMovements} className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary">Modifica dati</button><button onClick={()=>set(value=>({...value,expenses:value.expenses.filter(expense=>expense.id!==item.id)}))} className="ml-auto rounded-lg px-2 py-1.5 text-xs text-destructive">Elimina</button></div></Card>)}{!items.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Nessun abbonamento in questa sezione.</p></Card>}</div>
+  return <div className="flex flex-col gap-6"><div className="flex flex-wrap items-end justify-between gap-4"><Heading kicker="COSTI RICORRENTI" title="Centro abbonamenti" text="Costi attivi, programmati e conclusi con impatto mensile e annuale."/><button onClick={onOpenMovements} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Nuovo abbonamento</button></div><div className="grid gap-4 sm:grid-cols-3"><Metric label="Costo mensile attivo" value={monthly}/><Metric label="Costo annuale stimato" value={monthly*12}/><Card><p className="text-sm text-muted-foreground">Abbonamenti attivi</p><p className="mt-3 text-2xl font-semibold">{active.length}</p><p className="mt-1 text-xs text-muted-foreground">{upcoming.length} programmati · {ended.length} conclusi</p></Card></div><section><h3 className="mb-3 font-semibold">Attivi</h3>{list(active,'active')}</section>{upcoming.length>0&&<section><h3 className="mb-3 font-semibold">Programmati</h3>{list(upcoming,'upcoming')}</section>}<section><h3 className="mb-3 font-semibold">Conclusi</h3>{list(ended,'ended')}</section></div>
+}
+
+// ── OBIETTIVI ──
+function Goals({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;year:number}) {
+  const [editing,setEditing]=useState<SavingsGoal|null>(null)
+  const [showForm,setShowForm]=useState(false)
+  const t=totals(s,year),today=new Date().toISOString().slice(0,10)
+  const emergencySaved=s.goals.filter(item=>item.kind==='emergency').reduce((total,item)=>total+item.currentAmount,0)
+  const suggestedEmergency=t.mensileSpese*6
+  const submit=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=new FormData(event.currentTarget);const goal:SavingsGoal={id:editing?.id??uid(),name:String(form.get('name')),kind:String(form.get('kind')) as SavingsGoal['kind'],targetAmount:Number(form.get('targetAmount')),currentAmount:Number(form.get('currentAmount')),targetDate:String(form.get('targetDate')||'')||undefined};if(!goal.name||goal.targetAmount<=0||goal.currentAmount<0)return;set(value=>({...value,goals:editing?value.goals.map(item=>item.id===editing.id?goal:item):[goal,...value.goals]}));event.currentTarget.reset();setEditing(null);setShowForm(false)}
+  const edit=(goal:SavingsGoal)=>{setEditing(goal);setShowForm(true)}
+  return <div className="flex flex-col gap-6"><div className="flex flex-wrap items-end justify-between gap-4"><Heading kicker="RISPARMIO" title="Obiettivi e fondo emergenza" text="Trasforma il margine mensile in traguardi misurabili."/><button onClick={()=>{setEditing(null);setShowForm(value=>!value)}} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Nuovo obiettivo</button></div><div className="grid gap-4 sm:grid-cols-3"><Metric label="Fondo emergenza" value={emergencySaved} detail={t.mensileSpese>0?`${(emergencySaved/t.mensileSpese).toFixed(1)} mesi di spese`:'Aggiungi le spese ricorrenti'}/><Metric label="Obiettivo prudente (6 mesi)" value={suggestedEmergency}/><Card><p className="text-sm text-muted-foreground">Traguardi registrati</p><p className="mt-3 text-2xl font-semibold">{s.goals.length}</p><p className="mt-1 text-xs text-muted-foreground">Tutti modificabili in qualsiasi momento</p></Card></div>{showForm&&<form key={editing?.id??'new-goal'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.name}”</p>}<Field label="Nome"><input name="name" required defaultValue={editing?.name} placeholder="Es. Fondo emergenza, viaggio..."/></Field><Field label="Tipo"><select name="kind" defaultValue={editing?.kind??'goal'}><option value="goal">Obiettivo</option><option value="emergency">Fondo emergenza</option></select></Field><Field label="Importo obiettivo (€)"><input name="targetAmount" type="number" min=".01" step=".01" required defaultValue={editing?.targetAmount}/></Field><Field label="Già accumulato (€)"><input name="currentAmount" type="number" min="0" step=".01" required defaultValue={editing?.currentAmount??0}/></Field><Field label="Data obiettivo (facoltativa)"><input name="targetDate" type="date" min={today} defaultValue={editing?.targetDate}/></Field><div className="flex items-end gap-2"><button className="h-10 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground">{editing?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={()=>{setEditing(null);setShowForm(false)}} className="h-10 rounded-xl border px-4 text-sm">Annulla</button></div></form>}<div className="grid gap-4 md:grid-cols-2">{s.goals.map(goal=>{const progress=goal.targetAmount>0?Math.min(100,goal.currentAmount/goal.targetAmount*100):0;const remaining=Math.max(0,goal.targetAmount-goal.currentAmount);let monthlyNeeded=0;if(goal.targetDate&&goal.targetDate>today){const start=new Date(`${today}T12:00:00`),end=new Date(`${goal.targetDate}T12:00:00`);const months=Math.max(1,(end.getFullYear()-start.getFullYear())*12+end.getMonth()-start.getMonth());monthlyNeeded=remaining/months}return <Card key={goal.id}><div className="flex items-start justify-between gap-3"><div><span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{goal.kind==='emergency'?'FONDO EMERGENZA':'OBIETTIVO'}</span><h3 className="mt-3 text-lg font-semibold">{goal.name}</h3></div><div className="flex gap-3"><EditButton onClick={()=>edit(goal)} label="Modifica obiettivo"/><button onClick={()=>set(value=>({...value,goals:value.goals.filter(item=>item.id!==goal.id)}))}><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></div><div className="mt-5 flex items-end justify-between"><div><p className="text-2xl font-semibold">{money.format(goal.currentAmount)}</p><p className="text-xs text-muted-foreground">su {money.format(goal.targetAmount)}</p></div><b className="text-primary">{progress.toFixed(0)}%</b></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div><div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3 text-xs"><div><p className="text-muted-foreground">Mancano</p><p className="mt-1 font-semibold">{money.format(remaining)}</p></div><div><p className="text-muted-foreground">Versamento suggerito</p><p className="mt-1 font-semibold">{monthlyNeeded>0?`${money.format(monthlyNeeded)}/mese`:'Imposta una data'}</p></div></div></Card>})}{!s.goals.length&&<Card className="md:col-span-2"><div className="py-6 text-center"><PiggyBank className="mx-auto size-9 text-muted-foreground/50"/><p className="mt-3 font-semibold">Nessun obiettivo ancora</p><p className="mt-1 text-sm text-muted-foreground">Aggiungi un fondo emergenza o un traguardo personale.</p></div></Card>}</div></div>
 }
 
 // ── PIVA ──
@@ -723,10 +848,18 @@ function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActio
   const monthLabel=new Intl.DateTimeFormat('it-IT',{month:'long',year:'numeric'}).format(monthDate)
   const shiftMonth=(amount:number)=>{const next=new Date(monthDate);next.setMonth(next.getMonth()+amount);setSelectedMonth(`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}`)}
   const manualDeadlines=s.deadlines.filter(item=>item.date.startsWith(selectedMonth)).sort((a,b)=>a.date.localeCompare(b.date))
-  const financingDeadlines=s.financings.flatMap(financing=>residualInstallmentSchedule(financing.startDate,financing.freq,financing.residualAmount,financing.paymentAmount).filter(installment=>installment.date.startsWith(selectedMonth)).map(installment=>({financing,installment}))).sort((a,b)=>a.installment.date.localeCompare(b.installment.date))
+  const financingDeadlines=s.financings.flatMap(financing=>financingInstallmentSchedule(financing).filter(installment=>installment.date.startsWith(selectedMonth)).map(installment=>({financing,installment}))).sort((a,b)=>a.installment.date.localeCompare(b.installment.date))
   const monthItems=[...manualDeadlines.map(deadline=>({type:'manual' as const,date:deadline.date,deadline})),...financingDeadlines.map(item=>({type:'financing' as const,date:item.installment.date,...item}))].sort((a,b)=>a.date.localeCompare(b.date))
   const monthTotal=manualDeadlines.filter(item=>!item.paid).reduce((total,item)=>total+item.amount,0)+financingDeadlines.reduce((total,item)=>total+item.installment.amount,0)
-  const futureInstallments=s.financings.reduce((total,financing)=>total+residualInstallmentSchedule(financing.startDate,financing.freq,financing.residualAmount,financing.paymentAmount).length,0)
+  const futureInstallments=s.financings.reduce((total,financing)=>total+financingInstallmentSchedule(financing).length,0)
+  const payInstallment=(financing:Financing,installment:{date:string;amount:number})=>{
+    if(!window.confirm(`Registrare come pagata la rata di ${money.format(installment.amount)} di “${financing.name}”?`))return
+    const paidDate=new Date().toISOString().slice(0,10),expenseId=uid(),principalAmount=financingPrincipalReduction(financing,installment.amount)
+    set(value=>({...value,
+      expenses:[{id:expenseId,date:paidDate,description:`Rata ${financing.name}`,amount:installment.amount,kind:financing.kind,accountId:financing.accountId,recurring:false,freq:'unica',category:'Finanziamenti'},...value.expenses],
+      financings:value.financings.map(item=>item.id===financing.id?{...item,residualAmount:Math.max(0,item.residualAmount-principalAmount),remainingInstallments:item.residualMode==='principal'?Math.max(0,item.remainingInstallments-1):item.remainingInstallments,nextPaymentDate:nextInstallmentAfter(installment.date,item.freq),payments:[...item.payments,{id:uid(),dueDate:installment.date,paidDate,amount:installment.amount,principalAmount,expenseId}]}:item)
+    }))
+  }
   const submit=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const f=new FormData(e.currentTarget)
@@ -749,8 +882,8 @@ function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActio
         }
         const {financing,installment}=item
         const dateStatus=item.date<today?'Data trascorsa':item.date===today?'Scade oggi':'Programmata'
-        const remainingCount=remainingInstallmentCount(financing.residualAmount,financing.paymentAmount)
-        return <Card key={`financing-${financing.id}-${installment.number}`} className="border-primary/25 p-4"><div className="flex flex-wrap items-center gap-4"><div className="grid size-14 shrink-0 place-items-center rounded-xl bg-primary/10 text-center text-primary"><div><p className="text-[10px] font-semibold uppercase">{weekday}</p><p className="text-xl font-bold leading-none">{day}</p></div></div><div className="min-w-48 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">Rata · {financing.name}</h3><span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Automatica</span></div><p className="mt-1 text-xs text-muted-foreground">Rata residua {installment.number} di {remainingCount} · {FINANCING_LABEL[financing.category]} · {dateStatus}</p></div><div className="text-right"><b className="text-lg">{money.format(installment.amount)}</b><p className="mt-1 text-[10px] font-semibold uppercase text-primary">{installment.number===remainingCount&&installment.amount<financing.paymentAmount?'ULTIMA RATA':'RATA PREVISTA'}</p></div></div></Card>
+        const remainingCount=financingRemainingInstallments(financing)
+        return <Card key={`financing-${financing.id}-${installment.number}`} className="border-primary/25 p-4"><div className="flex flex-wrap items-center gap-4"><div className="grid size-14 shrink-0 place-items-center rounded-xl bg-primary/10 text-center text-primary"><div><p className="text-[10px] font-semibold uppercase">{weekday}</p><p className="text-xl font-bold leading-none">{day}</p></div></div><div className="min-w-48 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">Rata · {financing.name}</h3><span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Automatica</span></div><p className="mt-1 text-xs text-muted-foreground">Rata residua {installment.number} di {remainingCount} · {FINANCING_LABEL[financing.category]} · {dateStatus}</p></div><div className="text-right"><b className="text-lg">{money.format(installment.amount)}</b><p className="mt-1 text-[10px] font-semibold uppercase text-primary">{installment.number===remainingCount&&installment.amount<financing.paymentAmount?'ULTIMA RATA':'RATA PREVISTA'}</p></div><button onClick={()=>payInstallment(financing,installment)} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-primary-foreground"><CheckCircle2 className="size-4"/>Segna pagata</button></div></Card>
       })}{!monthItems.length&&<Card><div className="py-8 text-center"><CalendarDays className="mx-auto size-8 text-muted-foreground/50"/><p className="mt-3 font-semibold">Nessun pagamento in questo mese</p><p className="mt-1 text-sm text-muted-foreground">Usa le frecce per cambiare mese oppure aggiungi una scadenza manuale.</p></div></Card>}</div></section>
     </div>
   )
@@ -809,7 +942,7 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   const activeSubscriptions=s.expenses.filter(item=>(item.recurring||item.subscription)&&(!item.subscription||isActiveAt(item.subscription.startDate,item.subscription.endDate,data)))
   const recurringExpenses=activeSubscriptions.reduce((total,item)=>total+toMensile(item.amount,item.freq),0)
   const activeFinancing=s.financings.filter(item=>{
-    const schedule=residualInstallmentSchedule(item.startDate,item.freq,item.residualAmount,item.paymentAmount,today)
+    const schedule=financingInstallmentSchedule(item,today)
     return schedule.length>0&&data>=schedule[0].date&&data<=schedule[schedule.length-1].date
   }).reduce((total,item)=>total+toMensile(item.paymentAmount,item.freq),0)
   const taxReserve=recurringPiva*s.profile.taxReserve/100
@@ -885,6 +1018,11 @@ function Setup({s,set,onSave,saveMsg,saving,logout}:{s:BudgetState;set:React.Dis
           <Field label="Limite fisso (€/mese)"><input type="number" value={s.limiteSpesa.fisso} onChange={e=>set(x=>({...x,limiteSpesa:{...x.limiteSpesa,fisso:Number(e.target.value)}}))} /></Field>
           <Field label="Limite % sulle entrate"><input type="number" min="0" max="100" value={s.limiteSpesa.perc} onChange={e=>set(x=>({...x,limiteSpesa:{...x.limiteSpesa,perc:Number(e.target.value)}}))} /></Field>
         </div>
+      </Card>
+      <Card>
+        <h3 className="font-semibold">Personalizza la dashboard</h3>
+        <p className="mb-4 mt-1 text-sm text-muted-foreground">Scegli quali blocchi mostrare nella panoramica.</p>
+        <div className="grid gap-2 sm:grid-cols-2">{([['forecast','Previsioni 30/60/90 giorni'],['alerts','Avvisi e prossime scadenze'],['goals','Obiettivi di risparmio'],['subscriptions','Abbonamenti senza scadenza'],['charts','Grafici e indicatori']] as const).map(([key,label])=><label key={key} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-sm"><span>{label}</span><input type="checkbox" checked={s.dashboard[key]} onChange={event=>set(value=>({...value,dashboard:{...value.dashboard,[key]:event.target.checked}}))}/></label>)}</div>
       </Card>
       <Card>
         <h3 className="font-semibold mb-4">Categorie di spesa</h3>
