@@ -3,7 +3,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ArrowDownLeft, BadgeEuro, BrainCircuit, BriefcaseBusiness, CalendarDays, ChevronRight, ChevronLeft, CircleDollarSign, Landmark, LayoutDashboard, LogOut, Plus, RotateCcw, Save, Settings2, Trash2, WalletCards } from 'lucide-react'
-import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, Kind, Simulation, SimulationType, createEmptyState, dateIt, isActiveAt, migrate, money, monthlyData, monthlyPayment, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
+import { Account, Asset, AssetMovimento, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Kind, Simulation, SimulationType, createEmptyState, dateFullIt, dateIt, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, patrimoniTotals, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -181,7 +181,7 @@ DATI FINANZIARI (${year}):
 - Limite mensile: ${t.limiteAttivo < Infinity ? money.format(t.limiteAttivo)+'/mese ('+Math.round(t.usatoLimite*100)+'% usato)' : 'nessuno'}
 - Investimenti: versato ${money.format(pat.totVersato)}, valore ${money.format(pat.totValore)}, rendimento ${money.format(pat.rend)}
 - P.IVA: fatturato ${money.format(t.pivaIncome)}, tasse stimate ${money.format(t.tax+t.contributions)}, accantonato ${money.format(t.reserve)}
-- Finanziamenti: ${state.financings.map(f=>`${f.name}, residuo ${money.format(f.residualAmount)}, rata ${money.format(toMensile(f.paymentAmount,f.freq))}/mese`).join('; ') || 'nessuno'}
+- Finanziamenti: ${state.financings.map(f=>`${f.name}, residuo ${money.format(f.residualAmount)}, rata ${money.format(toMensile(f.paymentAmount,f.freq))}/mese, ${installmentProgress(f.startDate,f.freq,f.installmentCount).remaining} rate mancanti`).join('; ') || 'nessuno'}
 - Abbonamenti: ${state.expenses.filter(e=>e.subscription).map(e=>`${e.description} ${money.format(toMensile(e.amount,e.freq))}/mese`).join('; ') || 'nessuno'}
 - Spese principali: ${state.expenses.slice(0,6).map(e=>`${e.description} ${money.format(e.amount)} (${FREQ_LABEL[e.freq]})`).join(', ')}`
   }
@@ -332,6 +332,11 @@ const Field = ({label,children}:{label:string;children:React.ReactNode}) => (
 const FreqSelect = ({name,value,onChange}:{name?:string;value?:Freq;onChange?:(v:Freq)=>void}) => (
   <select name={name} value={value} onChange={e=>onChange?.(e.target.value as Freq)}>
     {(Object.keys(FREQ_LABEL) as Freq[]).map(f=><option key={f} value={f}>{FREQ_LABEL[f]}</option>)}
+  </select>
+)
+const InstallmentFreqSelect = ({value,onChange}:{value:Freq;onChange:(v:Freq)=>void}) => (
+  <select value={value} onChange={e=>onChange(e.target.value as Freq)}>
+    {(Object.keys(FREQ_LABEL) as Freq[]).filter(f=>f!=='unica').map(f=><option key={f} value={f}>{FREQ_LABEL[f]}</option>)}
   </select>
 )
 
@@ -576,13 +581,21 @@ function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   const [showForm,setShowForm]=useState(false)
   const [category,setCategory]=useState<FinancingCategory>('auto')
   const [freq,setFreq]=useState<Freq>('mensile')
-  const [openEnded,setOpenEnded]=useState(false)
+  const [interestMode,setInterestMode]=useState<InterestMode>('percentage')
+  const [originalAmount,setOriginalAmount]=useState(0)
+  const [interestRate,setInterestRate]=useState(0)
+  const [totalRepayable,setTotalRepayable]=useState(0)
+  const [installmentCount,setInstallmentCount]=useState(36)
+  const [startDate,setStartDate]=useState('')
   const residual=s.financings.reduce((total,item)=>total+Math.max(0,item.residualAmount),0)
   const monthly=s.financings.reduce((total,item)=>total+toMensile(item.paymentAmount,item.freq),0)
+  const calculatedTotal=interestMode==='total'?totalRepayable:originalAmount
+  const previewPayment=installmentAmount(originalAmount,interestMode,interestRate,calculatedTotal,installmentCount,freq)
+  const previewEndDate=installmentEndDate(startDate,freq,installmentCount)
+  const previewProgress=installmentProgress(startDate,freq,installmentCount)
   const submit=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const f=new FormData(e.currentTarget)
-    const originalAmount=Number(f.get('originalAmount'))
     const residualRaw=String(f.get('residualAmount')??'')
     const financing:Financing={
       id:uid(),
@@ -591,16 +604,19 @@ function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
       kind:String(f.get('kind')) as Kind,
       originalAmount,
       residualAmount:residualRaw===''?originalAmount:Number(residualRaw),
-      paymentAmount:Number(f.get('paymentAmount')),
+      paymentAmount:previewPayment,
       freq,
-      interestRate:Number(f.get('interestRate')||0),
-      startDate:String(f.get('startDate')??'')||undefined,
-      endDate:openEnded?null:String(f.get('endDate')),
+      interestMode,
+      interestRate:interestMode==='percentage'?interestRate:0,
+      totalRepayable:interestMode==='total'?totalRepayable:previewPayment*installmentCount,
+      installmentCount,
+      startDate,
+      endDate:previewEndDate,
       accountId:String(f.get('accountId')??'')||undefined
     }
-    if(!financing.name||financing.originalAmount<=0||financing.paymentAmount<=0)return
+    if(!financing.name||financing.originalAmount<=0||financing.paymentAmount<=0||!startDate||installmentCount<=0)return
     set(x=>({...x,financings:[financing,...x.financings]}))
-    e.currentTarget.reset();setCategory('auto');setFreq('mensile');setOpenEnded(false);setShowForm(false)
+    e.currentTarget.reset();setCategory('auto');setFreq('mensile');setInterestMode('percentage');setOriginalAmount(0);setInterestRate(0);setTotalRepayable(0);setInstallmentCount(36);setStartDate('');setShowForm(false)
   }
   return <div className="flex flex-col gap-6">
     <Heading kicker="DEBITI E RATE" title="Finanziamenti e mutui" text="Auto, casa, prestiti e leasing con residuo e impatto mensile."/>
@@ -610,25 +626,28 @@ function Financings({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
       <Field label="Nome"><input name="name" required placeholder="Es. Auto, mutuo casa..."/></Field>
       <Field label="Categoria"><select value={category} onChange={e=>setCategory(e.target.value as FinancingCategory)}>{(Object.keys(FINANCING_LABEL) as FinancingCategory[]).map(key=><option key={key} value={key}>{FINANCING_LABEL[key]}</option>)}</select></Field>
       <Field label="Ambito"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
-      <Field label="Importo iniziale (€)"><input name="originalAmount" type="number" min=".01" step=".01" required/></Field>
+      <Field label="Importo finanziato (€)"><input name="originalAmount" type="number" min=".01" step=".01" required value={originalAmount||''} onChange={e=>setOriginalAmount(Number(e.target.value))}/></Field>
       <Field label="Debito residuo (€)"><input name="residualAmount" type="number" min="0" step=".01" placeholder="Se vuoto = importo iniziale"/></Field>
-      <Field label="Rata (€)"><input name="paymentAmount" type="number" min=".01" step=".01" required/></Field>
-      <Field label="Frequenza rata"><FreqSelect value={freq} onChange={setFreq}/></Field>
-      <Field label="Tasso annuo %"><input name="interestRate" type="number" min="0" step=".01" defaultValue="0"/></Field>
+      <Field label="Frequenza rate"><InstallmentFreqSelect value={freq} onChange={setFreq}/></Field>
+      <Field label="Calcolo interessi"><select value={interestMode} onChange={e=>setInterestMode(e.target.value as InterestMode)}><option value="percentage">Tasso annuo in %</option><option value="total">Totale complessivo in €</option></select></Field>
+      {interestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={interestRate||''} onChange={e=>setInterestRate(Number(e.target.value))} placeholder="Es. 6,50"/></Field>:<Field label="Totale da restituire (€)"><input type="number" min={originalAmount||.01} step=".01" required value={totalRepayable||''} onChange={e=>setTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>}
+      <Field label="Numero totale di rate"><input type="number" min="1" max="1200" required value={installmentCount} onChange={e=>setInstallmentCount(Number(e.target.value))}/></Field>
       <Field label="Conto di addebito"><select name="accountId"><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
-      <Field label="Data inizio (facoltativa)"><input name="startDate" type="date"/></Field>
-      <Field label="Data fine"><input name="endDate" type="date" disabled={openEnded} required={!openEnded}/></Field>
-      <label className="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={openEnded} onChange={e=>setOpenEnded(e.target.checked)}/>Fine non definita</label>
+      <Field label="Data della prima rata"><input type="date" required value={startDate} onChange={e=>setStartDate(e.target.value)}/></Field>
+      <div className="col-span-full grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">Rata calcolata</p><p className="font-semibold">{money.format(previewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Data ultima rata</p><p className="font-semibold">{previewEndDate?dateFullIt(previewEndDate):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti a oggi</p><p className="font-semibold">{previewProgress.remaining} di {installmentCount||0}</p></div></div>
       <div className="col-span-full flex gap-3"><button className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">Salva</button><button type="button" onClick={()=>setShowForm(false)} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div>
     </form>}
     <div className="grid gap-4 md:grid-cols-2">{s.financings.map(item=>{
-      const paid=Math.max(0,item.originalAmount-item.residualAmount)
-      const progress=item.originalAmount>0?Math.min(100,paid/item.originalAmount*100):0
+      const plan=installmentProgress(item.startDate,item.freq,item.installmentCount)
+      const progress=item.installmentCount>0?Math.min(100,plan.paid/item.installmentCount*100):0
       return <Card key={item.id}>
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{FINANCING_LABEL[item.category]} · {item.kind==='piva'?'P.IVA':'Personale'}</p><h3 className="mt-1 font-semibold">{item.name}</h3></div><button onClick={()=>set(x=>({...x,financings:x.financings.filter(value=>value.id!==item.id)}))} aria-label="Elimina finanziamento"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div>
         <div className="mt-4 grid grid-cols-2 gap-3"><div><label className="text-xs text-muted-foreground" htmlFor={`residual-${item.id}`}>Residuo aggiornabile</label><input id={`residual-${item.id}`} className="mt-1 h-9 w-full rounded-xl border bg-background px-3 text-sm font-semibold" type="number" min="0" step=".01" value={item.residualAmount} onChange={e=>set(x=>({...x,financings:x.financings.map(value=>value.id===item.id?{...value,residualAmount:Number(e.target.value)}:value)}))}/></div><div><p className="text-xs text-muted-foreground">Rata</p><p className="mt-2 text-xl font-semibold">{money.format(item.paymentAmount)} <span className="text-xs font-normal text-muted-foreground">{FREQ_LABEL[item.freq].toLowerCase()}</span></p></div></div>
+        <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-secondary/60 p-3 text-center"><div><p className="text-[10px] text-muted-foreground">RATE TOTALI</p><p className="font-semibold">{item.installmentCount||'—'}</p></div><div><p className="text-[10px] text-muted-foreground">TRASCORSE</p><p className="font-semibold">{plan.paid}</p></div><div><p className="text-[10px] text-muted-foreground">MANCANTI</p><p className="font-semibold text-primary">{plan.remaining}</p></div></div>
         <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div>
-        <p className="mt-2 text-xs text-muted-foreground">Rimborsato {progress.toFixed(0)}% · Tasso {item.interestRate}%{item.endDate?` · Fine ${dateIt(item.endDate)}`:' · Senza data finale'}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{item.startDate?`Dal ${dateFullIt(item.startDate)}`:'Data iniziale non indicata'}{plan.endDate?` al ${dateFullIt(plan.endDate)}`:''} · {item.interestMode==='total'?`Totale da restituire ${money.format(item.totalRepayable)}`:`Tasso annuo ${item.interestRate}%`}</p>
+        {plan.nextDate&&<p className="mt-1 text-xs font-medium text-primary">Prossima rata prevista: {dateFullIt(plan.nextDate)}</p>}
+        {item.installmentCount>0&&plan.remaining===0&&<p className="mt-1 text-xs font-semibold text-green-600">Piano rateale concluso</p>}
       </Card>
     })}{!s.financings.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Nessun finanziamento inserito</p></Card>}</div>
   </div>
@@ -682,7 +701,20 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   const [data,setData]=useState(today)
   const [simType,setSimType]=useState<SimulationType>('mutuo')
   const [freq,setFreq]=useState<Freq>('mensile')
+  const [simInterestMode,setSimInterestMode]=useState<InterestMode>('percentage')
+  const [simAmount,setSimAmount]=useState(0)
+  const [simDownPayment,setSimDownPayment]=useState(0)
+  const [simInterestRate,setSimInterestRate]=useState(0)
+  const [simTotalRepayable,setSimTotalRepayable]=useState(0)
+  const [simInstallmentCount,setSimInstallmentCount]=useState(36)
+  const [simStartDate,setSimStartDate]=useState('')
   const [selectedId,setSelectedId]=useState(s.simulations[0]?.id??'')
+  const isLoan=simType==='mutuo'||simType==='finanziamento'
+  const simulatedPrincipal=Math.max(0,simAmount-simDownPayment)
+  const simCalculatedTotal=simInterestMode==='total'?simTotalRepayable:simulatedPrincipal
+  const simPreviewPayment=isLoan?installmentAmount(simulatedPrincipal,simInterestMode,simInterestRate,simCalculatedTotal,simInstallmentCount,freq):0
+  const simPreviewEnd=isLoan?installmentEndDate(simStartDate,freq,simInstallmentCount):''
+  const simPreviewProgress=isLoan?installmentProgress(simStartDate,freq,simInstallmentCount):null
   useEffect(()=>{
     if(s.simulations.length&&!s.simulations.some(item=>item.id===selectedId))setSelectedId(s.simulations[0].id)
     if(!s.simulations.length&&selectedId)setSelectedId('')
@@ -691,18 +723,19 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   const submit=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const form=new FormData(e.currentTarget)
-    const isLoan=simType==='mutuo'||simType==='finanziamento'
     const simulation:Simulation={
       id:uid(),name:String(form.get('name')),type:simType,
-      amount:Number(form.get('amount')),downPayment:isLoan?Number(form.get('downPayment')||0):0,
-      interestRate:isLoan?Number(form.get('interestRate')||0):0,
-      durationMonths:isLoan?Number(form.get('durationYears'))*12:0,
-      freq:isLoan?'mensile':freq,startDate:String(form.get('startDate')??'')||undefined,
+      amount:simAmount,downPayment:isLoan?simDownPayment:0,
+      interestMode:isLoan?simInterestMode:'percentage',
+      interestRate:isLoan&&simInterestMode==='percentage'?simInterestRate:0,
+      totalRepayable:isLoan?(simInterestMode==='total'?simTotalRepayable:simPreviewPayment*simInstallmentCount):0,
+      installmentCount:isLoan?simInstallmentCount:0,
+      freq,startDate:simStartDate||undefined,
       kind:String(form.get('kind')) as Kind
     }
-    if(!simulation.name||simulation.amount<=0||(isLoan&&simulation.durationMonths<=0))return
+    if(!simulation.name||simulation.amount<=0||(isLoan&&(!simStartDate||simInstallmentCount<=0||simPreviewPayment<=0)))return
     set(value=>({...value,simulations:[simulation,...value.simulations]}));setSelectedId(simulation.id)
-    e.currentTarget.reset();setSimType('mutuo');setFreq('mensile')
+    e.currentTarget.reset();setSimType('mutuo');setFreq('mensile');setSimInterestMode('percentage');setSimAmount(0);setSimDownPayment(0);setSimInterestRate(0);setSimTotalRepayable(0);setSimInstallmentCount(36);setSimStartDate('')
   }
   const selected=s.simulations.find(item=>item.id===selectedId)
   const recurringIncome=s.incomes.filter(item=>item.recurring&&(!item.date||item.date<=data)).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
@@ -713,11 +746,13 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   const taxReserve=recurringPiva*s.profile.taxReserve/100
   const baseMonthly=recurringIncome-recurringExpenses-activeFinancing-taxReserve
   let monthlyImpact=0,upfrontImpact=0,scenarioPayment=0
+  let selectedPlan:ReturnType<typeof installmentProgress>|null=null
   if(selected){
     if(selected.type==='mutuo'||selected.type==='finanziamento'){
       upfrontImpact=selected.downPayment
-      scenarioPayment=monthlyPayment(Math.max(0,selected.amount-selected.downPayment),selected.interestRate,selected.durationMonths)
-      monthlyImpact=-scenarioPayment
+      scenarioPayment=installmentAmount(Math.max(0,selected.amount-selected.downPayment),selected.interestMode,selected.interestRate,selected.totalRepayable,selected.installmentCount,selected.freq)
+      monthlyImpact=-toMensile(scenarioPayment,selected.freq)
+      selectedPlan=installmentProgress(selected.startDate??'',selected.freq,selected.installmentCount,data)
     }else if(selected.freq==='unica'){
       upfrontImpact=selected.type==='spesa'?selected.amount:-selected.amount
     }else{
@@ -736,13 +771,20 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
       <Field label="Nome scenario"><input name="name" required placeholder="Es. Mutuo casa 25 anni"/></Field>
       <Field label="Cosa vuoi simulare"><select value={simType} onChange={e=>setSimType(e.target.value as SimulationType)}>{(Object.keys(SIMULATION_LABEL) as SimulationType[]).map(type=><option key={type} value={type}>{SIMULATION_LABEL[type]}</option>)}</select></Field>
       <Field label="Ambito"><select name="kind"><option value="personale">Personale</option><option value="piva">P.IVA</option></select></Field>
-      <Field label={simType==='mutuo'||simType==='finanziamento'?'Costo totale (€)':'Importo (€)'}><input name="amount" type="number" min=".01" step=".01" required/></Field>
-      {(simType==='mutuo'||simType==='finanziamento')?<><Field label="Anticipo (€)"><input name="downPayment" type="number" min="0" step=".01" defaultValue="0"/></Field><Field label="Tasso annuo %"><input name="interestRate" type="number" min="0" step=".01" defaultValue="0"/></Field><Field label="Durata (anni)"><input name="durationYears" type="number" min="1" max="50" required/></Field></>:<Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field>}
-      <Field label="Data inizio (facoltativa)"><input name="startDate" type="date"/></Field>
+      <Field label={isLoan?'Costo del bene/progetto (€)':'Importo (€)'}><input type="number" min=".01" step=".01" required value={simAmount||''} onChange={e=>setSimAmount(Number(e.target.value))}/></Field>
+      {isLoan?<>
+        <Field label="Anticipo (€)"><input type="number" min="0" step=".01" value={simDownPayment||''} onChange={e=>setSimDownPayment(Number(e.target.value))}/></Field>
+        <Field label="Frequenza rate"><InstallmentFreqSelect value={freq} onChange={setFreq}/></Field>
+        <Field label="Calcolo interessi"><select value={simInterestMode} onChange={e=>setSimInterestMode(e.target.value as InterestMode)}><option value="percentage">Tasso annuo in %</option><option value="total">Totale complessivo in €</option></select></Field>
+        {simInterestMode==='percentage'?<Field label="Tasso annuo %"><input type="number" min="0" step=".01" value={simInterestRate||''} onChange={e=>setSimInterestRate(Number(e.target.value))}/></Field>:<Field label="Totale da restituire (€)"><input type="number" min={simulatedPrincipal||.01} step=".01" required value={simTotalRepayable||''} onChange={e=>setSimTotalRepayable(Number(e.target.value))} placeholder="Capitale + interessi"/></Field>}
+        <Field label="Numero totale di rate"><input type="number" min="1" max="1200" required value={simInstallmentCount} onChange={e=>setSimInstallmentCount(Number(e.target.value))}/></Field>
+        <Field label="Data della prima rata"><input type="date" required value={simStartDate} onChange={e=>setSimStartDate(e.target.value)}/></Field>
+        <div className="col-span-full grid gap-3 rounded-xl bg-secondary/60 p-4 sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">Rata stimata</p><p className="font-semibold">{money.format(simPreviewPayment)}</p></div><div><p className="text-xs text-muted-foreground">Data ultima rata</p><p className="font-semibold">{simPreviewEnd?dateFullIt(simPreviewEnd):'Da calcolare'}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti a oggi</p><p className="font-semibold">{simPreviewProgress?.remaining??0} di {simInstallmentCount||0}</p></div></div>
+      </>:<><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><Field label="Data inizio (facoltativa)"><input type="date" value={simStartDate} onChange={e=>setSimStartDate(e.target.value)}/></Field></>}
       <button className="self-end h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground md:col-span-1"><Plus className="mr-2 inline size-4"/>Salva scenario</button>
     </form>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Margine mensile attuale" value={baseMonthly} warn={baseMonthly<0}/><Metric label="Impatto scenario/mese" value={monthlyImpact}/><Metric label={projectedMonthly>=0?'Residuo mensile':'Mancanza mensile'} value={Math.abs(projectedMonthly)} warn={projectedMonthly<0}/><Metric label="Liquidità dopo anticipo" value={projectedLiquidity} warn={projectedLiquidity<0}/></div>
-    {selected&&<Card className={projectedMonthly<0||projectedLiquidity<0?'border-destructive/40 bg-destructive/5':'border-green-500/30 bg-green-50/50 dark:bg-green-950/20'}><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{SIMULATION_LABEL[selected.type]}</p><h3 className="mt-1 text-xl font-semibold">{selected.name}</h3><p className="mt-2 text-sm text-muted-foreground">Importo {money.format(selected.amount)}{selected.downPayment>0?` · Anticipo ${money.format(selected.downPayment)}`:''}{scenarioPayment>0?` · Rata stimata ${money.format(scenarioPayment)}/mese`:''}</p></div><div className={`rounded-xl px-4 py-2 text-sm font-semibold ${projectedMonthly>=0&&projectedLiquidity>=0?'bg-green-600 text-white':'bg-destructive text-destructive-foreground'}`}>{projectedMonthly>=0&&projectedLiquidity>=0?'Sostenibile con i dati inseriti':`Mancano ${money.format(Math.max(0,-projectedMonthly))}/mese`}</div></div><p className="mt-4 text-xs text-muted-foreground">Stima indicativa: non include spese bancarie, assicurazioni, variazioni dei tassi o costi non registrati.</p></Card>}
+    {selected&&<Card className={projectedMonthly<0||projectedLiquidity<0?'border-destructive/40 bg-destructive/5':'border-green-500/30 bg-green-50/50 dark:bg-green-950/20'}><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{SIMULATION_LABEL[selected.type]}</p><h3 className="mt-1 text-xl font-semibold">{selected.name}</h3><p className="mt-2 text-sm text-muted-foreground">Importo {money.format(selected.amount)}{selected.downPayment>0?` · Anticipo ${money.format(selected.downPayment)}`:''}{scenarioPayment>0?` · Rata stimata ${money.format(scenarioPayment)} ${FREQ_LABEL[selected.freq].toLowerCase()}`:''}</p></div><div className={`rounded-xl px-4 py-2 text-sm font-semibold ${projectedMonthly>=0&&projectedLiquidity>=0?'bg-green-600 text-white':'bg-destructive text-destructive-foreground'}`}>{projectedMonthly>=0&&projectedLiquidity>=0?'Sostenibile con i dati inseriti':`Mancano ${money.format(Math.max(0,-projectedMonthly))}/mese`}</div></div>{selectedPlan&&<div className="mt-4 grid gap-3 rounded-xl bg-background/70 p-4 sm:grid-cols-4"><div><p className="text-xs text-muted-foreground">Prima rata</p><p className="font-semibold">{selected.startDate?dateFullIt(selected.startDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Ultima rata</p><p className="font-semibold">{selectedPlan.endDate?dateFullIt(selectedPlan.endDate):'—'}</p></div><div><p className="text-xs text-muted-foreground">Rate trascorse</p><p className="font-semibold">{selectedPlan.paid}</p></div><div><p className="text-xs text-muted-foreground">Rate mancanti</p><p className="font-semibold text-primary">{selectedPlan.remaining} di {selected.installmentCount}</p></div></div>}<p className="mt-4 text-xs text-muted-foreground">{selected.type==='mutuo'||selected.type==='finanziamento'?(selected.interestMode==='total'?`Calcolo sul totale da restituire di ${money.format(selected.totalRepayable)}.`:`Calcolo con tasso annuo del ${selected.interestRate}%. `):''} Stima indicativa: non include spese bancarie, assicurazioni, variazioni dei tassi o costi non registrati.</p></Card>}
     {expiredSubscriptions.length>0&&<Card><h3 className="font-semibold">Abbonamenti conclusi entro la data scelta</h3><p className="mt-1 text-sm text-muted-foreground">Liberano {money.format(releasedMonthly)} al mese.</p><div className="mt-3">{expiredSubscriptions.map(item=><div key={item.id} className="flex justify-between border-t py-2 text-sm"><span>{item.description}</span><span className="text-green-600">+{money.format(toMensile(item.amount,item.freq))}/mese</span></div>)}</div></Card>}
     <section><h3 className="mb-3 font-semibold">Scenari salvati</h3><div className="grid gap-3 md:grid-cols-2">{s.simulations.map(item=><Card key={item.id} className={item.id===selectedId?'border-primary':''}><div className="flex items-start justify-between gap-3"><button onClick={()=>setSelectedId(item.id)} className="min-w-0 flex-1 text-left"><p className="text-xs font-semibold text-primary">{SIMULATION_LABEL[item.type]}</p><p className="font-semibold">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{money.format(item.amount)} · {item.kind==='piva'?'P.IVA':'Personale'}</p></button><button onClick={()=>set(value=>({...value,simulations:value.simulations.filter(scenario=>scenario.id!==item.id)}))} aria-label="Elimina scenario"><Trash2 className="size-4 text-muted-foreground hover:text-destructive"/></button></div></Card>)}{!s.simulations.length&&<Card className="md:col-span-2"><p className="text-center text-sm text-muted-foreground">Salva il primo scenario per iniziare il confronto.</p></Card>}</div></section>
   </div>
