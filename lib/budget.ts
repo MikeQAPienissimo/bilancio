@@ -72,6 +72,7 @@ export type Financing = {
   accountId?: string
   residualMode: ResidualMode
   remainingInstallments: number
+  residualCalculatedFromSchedule?: boolean
   nextPaymentDate?: string
   payments: FinancingPayment[]
 }
@@ -243,6 +244,10 @@ export function remainingInstallmentCount(residualAmount: number, paymentAmount:
   return Math.ceil(residualAmount / paymentAmount)
 }
 
+export function roundCurrency(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100
+}
+
 export function nextInstallmentDate(startDate: string, freq: Freq, asOfDate = isoDate(new Date())) {
   if (!startDate) return ''
   const start = new Date(`${startDate}T12:00:00`)
@@ -272,7 +277,7 @@ export function residualInstallmentSchedule(
 
 export function financingRemainingInstallments(financing: Financing) {
   if (financing.residualAmount <= 0 || financing.paymentAmount <= 0) return 0
-  if (financing.residualMode === 'principal') return Math.max(0, Math.floor(financing.remainingInstallments || 0))
+  if (Number.isFinite(financing.remainingInstallments)) return Math.max(0, Math.floor(financing.remainingInstallments))
   return remainingInstallmentCount(financing.residualAmount, financing.paymentAmount)
 }
 
@@ -316,6 +321,14 @@ export function installmentProgress(startDate: string, freq: Freq, installmentCo
   return { paid, remaining: Math.max(0, installmentCount - paid), nextDate, endDate }
 }
 
+export function financingStatusFromSchedule(startDate: string, freq: Freq, installmentCount: number, paymentAmount: number, asOfDate = isoDate(new Date())) {
+  const progress = installmentProgress(startDate, freq, installmentCount, asOfDate)
+  return {
+    ...progress,
+    residualAmount: roundCurrency(Math.max(0, paymentAmount) * progress.remaining)
+  }
+}
+
 export function isActiveAt(startDate: string | undefined, endDate: string | null | undefined, atDate: string) {
   if (startDate && startDate > atDate) return false
   if (endDate && endDate < atDate) return false
@@ -324,7 +337,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 9,
+    version: 10,
     profile: {
       name: '',
       ateco: '',
@@ -348,7 +361,7 @@ export function createEmptyState(): BudgetState {
   }
 }
 
-export const money = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+export const money = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 export const dateIt = (v: string) => new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short' }).format(new Date(`${v}T12:00:00`))
 export const dateFullIt = (v: string) => new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${v}T12:00:00`))
 export const uid = () => crypto.randomUUID()
@@ -356,7 +369,7 @@ export const uid = () => crypto.randomUUID()
 export function migrate(v: Partial<BudgetState>): BudgetState {
   const empty = createEmptyState()
   return {
-    ...empty, ...v, version: 9,
+    ...empty, ...v, version: 10,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -367,9 +380,19 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
       const installmentCount = financing.installmentCount ?? 0
       const startDate = financing.startDate ?? ''
       const residualMode = financing.residualMode ?? 'total_due' as ResidualMode
-      const remainingInstallments = financing.remainingInstallments ?? remainingInstallmentCount(financing.residualAmount, financing.paymentAmount)
+      const payments = financing.payments ?? []
+      const oldAutomaticResidual = (v.version ?? 0) < 10
+        && residualMode === 'total_due'
+        && financing.interestMode === 'payment'
+        && payments.length === 0
+        && Math.abs(financing.residualAmount - financing.originalAmount) < 0.005
+      const scheduleStatus = financingStatusFromSchedule(startDate, financing.freq, installmentCount, financing.paymentAmount)
+      const remainingInstallments = oldAutomaticResidual
+        ? scheduleStatus.remaining
+        : financing.remainingInstallments ?? remainingInstallmentCount(financing.residualAmount, financing.paymentAmount)
       const migrated: Financing = {
         ...financing,
+        residualAmount: oldAutomaticResidual ? scheduleStatus.residualAmount : financing.residualAmount,
         interestMode: financing.interestMode ?? 'percentage' as InterestMode,
         totalRepayable: financing.totalRepayable ?? financing.originalAmount,
         installmentCount,
@@ -377,10 +400,11 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         endDate: financing.endDate ?? installmentEndDate(startDate, financing.freq, installmentCount),
         residualMode,
         remainingInstallments,
-        nextPaymentDate: financing.nextPaymentDate ?? nextInstallmentDate(startDate, financing.freq),
-        payments: financing.payments ?? []
+        residualCalculatedFromSchedule: oldAutomaticResidual || financing.residualCalculatedFromSchedule,
+        nextPaymentDate: oldAutomaticResidual ? scheduleStatus.nextDate : financing.nextPaymentDate ?? nextInstallmentDate(startDate, financing.freq),
+        payments
       }
-      return { ...migrated, endDate: financingInstallmentSchedule(migrated).at(-1)?.date ?? migrated.endDate }
+      return { ...migrated, endDate: installmentEndDate(startDate, financing.freq, installmentCount) || migrated.endDate }
     }),
     goals: v.goals ?? [],
     benefits: (v.benefits ?? []).map(benefit => ({ ...benefit, accreditMode: benefit.accreditMode ?? 'none', transactions: benefit.transactions ?? [] })),
