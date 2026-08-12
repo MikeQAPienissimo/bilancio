@@ -157,12 +157,12 @@ export function totals(s: BudgetState, y: number) {
   const limFisso = s.limiteSpesa.fisso > 0 ? s.limiteSpesa.fisso : Infinity
   const limPerc = s.limiteSpesa.perc > 0 ? (totalIncome * s.limiteSpesa.perc / 100) : Infinity
   const limiteAttivo = Math.min(limFisso, limPerc)
-  const usatoLimite = limiteAttivo < Infinity ? mensileSpese / limiteAttivo : 0
+  const usatoLimite = (limiteAttivo < Infinity && limiteAttivo > 0) ? mensileSpese / limiteAttivo : 0
   return {
     incomes, expenses, pivaIncome, taxable, contributions, tax, reserve,
     totalIncome, totalExpense, liquidity, assets,
     netWorth: liquidity + assets,
-    mensileSpese, limiteAttivo, usatoLimite
+    mensileSpese, limiteAttivo: isFinite(limiteAttivo) ? limiteAttivo : Infinity, usatoLimite: isNaN(usatoLimite) ? 0 : usatoLimite
   }
 }
 
