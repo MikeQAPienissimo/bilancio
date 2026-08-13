@@ -8,6 +8,7 @@ export type Income = {
   incomeClass?: 'cash' | 'benefit'
   benefitId?: string
   benefitTransactionId?: string
+  invoiceId?: string
 }
 export type Expense = Income & {
   category: string
@@ -31,6 +32,10 @@ export type Asset = {
   type: 'finanziario' | 'assicurativo' | 'risparmio'
   paid: number; value: number; istituto?: string
   freq?: Freq; importoVers?: number
+  startDate?: string
+  durationYears?: number
+  autoTrackPayments?: boolean
+  sourceAccountId?: string
   movimenti?: AssetMovimento[]
 }
 export type AssetMovimento = {
@@ -102,6 +107,21 @@ export type SavingsGoal = {
   currentAmount: number
   targetDate?: string
 }
+export type Invoice = {
+  id: string
+  number: string
+  issueDate: string
+  customer: string
+  amount: number
+  dueDate?: string
+  paid: boolean
+  paidDate?: string
+  incomeId?: string
+  fileName?: string
+  filePath?: string
+  fileType?: string
+  notes?: string
+}
 export type BenefitType = 'meal' | 'welfare' | 'fuel'
 export type WelfareCategory = 'shopping' | 'health' | 'education' | 'transport' | 'care' | 'sport' | 'culture' | 'travel' | 'pension' | 'other'
 export type BenefitTransaction = {
@@ -156,6 +176,7 @@ export type BudgetState = {
   financings: Financing[]
   simulations: Simulation[]
   goals: SavingsGoal[]
+  invoices: Invoice[]
   benefits: BenefitWallet[]
   dashboard: DashboardPreferences
   limiteSpesa: LimiteSpesa
@@ -329,6 +350,21 @@ export function financingStatusFromSchedule(startDate: string, freq: Freq, insta
   }
 }
 
+export function assetPlanStatus(asset: Asset, asOfDate = isoDate(new Date())) {
+  const totalInstallments=asset.durationYears&&asset.freq
+    ? Math.max(1,Math.round(asset.durationYears*installmentsPerYear(asset.freq)))
+    : 0
+  const progress=asset.startDate&&asset.freq&&totalInstallments>0
+    ? installmentProgress(asset.startDate,asset.freq,totalInstallments,asOfDate)
+    : {paid:0,remaining:totalInstallments,nextDate:'',endDate:''}
+  return {
+    ...progress,
+    totalInstallments,
+    estimatedPaid:roundCurrency(progress.paid*(asset.importoVers??0)),
+    estimatedRemaining:roundCurrency(progress.remaining*(asset.importoVers??0))
+  }
+}
+
 export function isActiveAt(startDate: string | undefined, endDate: string | null | undefined, atDate: string) {
   if (startDate && startDate > atDate) return false
   if (endDate && endDate < atDate) return false
@@ -337,7 +373,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 10,
+    version: 11,
     profile: {
       name: '',
       ateco: '',
@@ -354,6 +390,7 @@ export function createEmptyState(): BudgetState {
     financings: [],
     simulations: [],
     goals: [],
+    invoices: [],
     benefits: [],
     dashboard: { forecast: true, alerts: true, goals: true, subscriptions: true, charts: true },
     incomes: [],
@@ -369,7 +406,7 @@ export const uid = () => crypto.randomUUID()
 export function migrate(v: Partial<BudgetState>): BudgetState {
   const empty = createEmptyState()
   return {
-    ...empty, ...v, version: 10,
+    ...empty, ...v, version: 11,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -407,6 +444,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
       return { ...migrated, endDate: installmentEndDate(startDate, financing.freq, installmentCount) || migrated.endDate }
     }),
     goals: v.goals ?? [],
+    invoices: v.invoices ?? [],
     benefits: (v.benefits ?? []).map(benefit => ({ ...benefit, accreditMode: benefit.accreditMode ?? 'none', transactions: benefit.transactions ?? [] })),
     dashboard: { ...empty.dashboard, ...v.dashboard },
     simulations: (v.simulations ?? []).map(simulation => {
@@ -422,7 +460,11 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         paymentAmount: simulation.paymentAmount ?? installmentAmount(principal, interestMode, simulation.interestRate ?? 0, totalRepayable, installmentCount, simulation.freq)
       }
     }),
-    expenses: (v.expenses ?? []).map(e => ({ ...e, freq: e.freq ?? 'mensile' as Freq })),
+    expenses: (v.expenses ?? []).map(e => ({
+      ...e,
+      freq: e.freq ?? 'mensile' as Freq,
+      subscription: e.subscription ?? (e.recurring ? { startDate: e.date, endDate: null } : undefined)
+    })),
     incomes: (v.incomes ?? []).map(i => ({ ...i, freq: i.freq ?? 'mensile' as Freq }))
   }
 }
@@ -466,19 +508,24 @@ export function totals(s: BudgetState, y: number) {
 }
 
 export function monthlyData(s: BudgetState, y: number) {
-  return ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'].map((month, index) => ({
-    month,
-    entrate: s.incomes.filter(i => i.incomeClass !== 'benefit' && new Date(i.date).getFullYear()===y && new Date(i.date).getMonth()===index).reduce((n,x)=>n+x.amount,0),
-    spese: s.expenses.filter(i => new Date(i.date).getFullYear()===y && new Date(i.date).getMonth()===index).reduce((n,x)=>n+x.amount,0)
-  }))
+  return ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'].map((month, index) => {
+    const monthKey=`${y}-${String(index+1).padStart(2,'0')}`
+    const monthEnd=isoDate(new Date(y,index+1,0,12))
+    const recurringIncome=s.incomes.filter(item=>item.incomeClass!=='benefit'&&item.recurring&&item.date<=monthEnd).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
+    const oneOffIncome=s.incomes.filter(item=>item.incomeClass!=='benefit'&&!item.recurring&&item.date.startsWith(monthKey)).reduce((total,item)=>total+item.amount,0)
+    const recurringExpenses=s.expenses.filter(item=>(item.recurring||item.subscription)&&isActiveAt(item.subscription?.startDate??item.date,item.subscription?.endDate,monthEnd)).reduce((total,item)=>total+toMensile(item.amount,item.freq),0)
+    const oneOffExpenses=s.expenses.filter(item=>!item.recurring&&!item.subscription&&item.date.startsWith(monthKey)).reduce((total,item)=>total+item.amount,0)
+    return {month,entrate:recurringIncome+oneOffIncome,spese:recurringExpenses+oneOffExpenses}
+  })
 }
 
 export function patrimoniTotals(assets: Asset[]) {
   let totVersato = 0, totValore = 0
   assets.forEach(a => {
     const movs = a.movimenti ?? []
-    const versato = movs.filter(m => m.tipo==='versamento').reduce((n,m)=>n+m.importo,0)
+    const versatoRegistrato = movs.filter(m => m.tipo==='versamento').reduce((n,m)=>n+m.importo,0)
     const prelevato = movs.filter(m => m.tipo==='prelievo').reduce((n,m)=>n+m.importo,0)
+    const versato = a.autoTrackPayments ? Math.max(versatoRegistrato,assetPlanStatus(a).estimatedPaid) : versatoRegistrato
     const ult = [...movs].filter(m=>m.tipo==='aggiornamento_valore').sort((x,y)=>y.data.localeCompare(x.data))[0]
     totVersato += versato - prelevato
     totValore += ult ? ult.importo : (a.value)
