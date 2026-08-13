@@ -6,15 +6,15 @@ function jsonError(error:string,status:number){return NextResponse.json({error},
 
 async function getAdmin(request:Request){
   const serviceRoleKey=process.env.SUPABASE_SERVICE_ROLE_KEY
-  const adminEmail=process.env.ADMIN_EMAIL?.trim().toLowerCase()
-  if(!serviceRoleKey||!adminEmail)return{error:jsonError('Gestione inviti non ancora configurata.',503)}
+  const adminEmails=(process.env.ADMIN_EMAILS??process.env.ADMIN_EMAIL??'').split(',').map(email=>email.trim().toLowerCase()).filter(Boolean)
+  if(!serviceRoleKey||!adminEmails.length)return{error:jsonError('Gestione inviti non ancora configurata.',503)}
   const authorization=request.headers.get('authorization')
   const token=authorization?.startsWith('Bearer ')?authorization.slice(7):''
   if(!token)return{error:jsonError('Accesso non autorizzato.',401)}
   const verifier=createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}})
   const {data:{user},error}=await verifier.auth.getUser(token)
   if(error||!user)return{error:jsonError('Sessione scaduta.',401)}
-  if(user.email?.toLowerCase()!==adminEmail)return{error:jsonError('Funzione riservata all’amministratore.',403)}
+  if(!user.email||!adminEmails.includes(user.email.toLowerCase()))return{error:jsonError('Funzione riservata all’amministratore.',403)}
   const admin=createClient(SUPABASE_URL,serviceRoleKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}})
   return{admin}
 }

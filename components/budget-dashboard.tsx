@@ -1219,8 +1219,8 @@ function AccountAccess({user}:{user:any}){
   const [loading,setLoading]=useState(false)
   const [message,setMessage]=useState('')
   const [error,setError]=useState('')
-  const adminEmail=process.env.NEXT_PUBLIC_ADMIN_EMAIL?.trim().toLowerCase()
-  const isAdmin=Boolean(adminEmail&&user.email?.toLowerCase()===adminEmail)
+  const adminEmails=(process.env.NEXT_PUBLIC_ADMIN_EMAILS??process.env.NEXT_PUBLIC_ADMIN_EMAIL??'').split(',').map(email=>email.trim().toLowerCase()).filter(Boolean)
+  const isAdmin=Boolean(user.email&&adminEmails.includes(user.email.toLowerCase()))
   const authorizedFetch=async(input:string,init?:RequestInit)=>{const{data:{session}}=await sb.auth.getSession();if(!session?.access_token)throw new Error('Sessione scaduta.');return fetch(input,{...init,headers:{...init?.headers,Authorization:`Bearer ${session.access_token}`}})}
   const loadUsers=useCallback(async()=>{if(!isAdmin)return;setLoading(true);setError('');try{const response=await authorizedFetch('/api/admin/users');const data=await response.json();if(!response.ok)throw new Error(data.error??'Impossibile caricare gli utenti.');setUsers(data.users??[])}catch(fetchError){setError(fetchError instanceof Error?fetchError.message:'Errore di connessione.')}finally{setLoading(false)}},[isAdmin])
   useEffect(()=>{void loadUsers()},[loadUsers])
