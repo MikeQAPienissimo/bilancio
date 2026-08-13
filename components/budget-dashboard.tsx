@@ -2,7 +2,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ArrowDownLeft, BadgeEuro, Bell, BrainCircuit, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronRight, ChevronLeft, CircleDollarSign, Eye, EyeOff, FileText, FileUp, Landmark, LayoutDashboard, LogOut, MoreHorizontal, Pencil, PiggyBank, Plus, ReceiptText, Repeat2, RotateCcw, Save, Settings2, Target, Trash2, TrendingUp, Upload, WalletCards, X } from 'lucide-react'
+import { ArrowDownLeft, BadgeEuro, Bell, BrainCircuit, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronRight, ChevronLeft, CircleDollarSign, Eye, EyeOff, FileText, FileUp, KeyRound, Landmark, LayoutDashboard, LockKeyhole, LogOut, Mail, MoreHorizontal, Pencil, PiggyBank, Plus, ReceiptText, Repeat2, RotateCcw, Save, Settings2, ShieldCheck, Target, Trash2, TrendingUp, Upload, Users, WalletCards, X } from 'lucide-react'
 import { Account, Asset, AssetMovimento, BenefitAccreditMode, BenefitTransaction, BenefitType, BenefitWallet, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Invoice, Kind, ResidualMode, SavingsGoal, Simulation, SimulationType, WelfareCategory, assetPlanStatus, createEmptyState, dateFullIt, dateIt, financingInstallmentSchedule, financingPrincipalReduction, financingRemainingInstallments, financingStatusFromSchedule, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, nextInstallmentAfter, patrimoniTotals, remainingInstallmentCount, roundCurrency, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
@@ -46,7 +46,9 @@ const IS_PATRIMONIO = (cat: string) => ['finanziario','assicurativo','risparmio'
 function AuthScreen() {
   const [loading, setLoading] = useState(false)
   const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
+  const [password,setPassword]=useState('')
+  const [mode,setMode]=useState<'password'|'magic'>('password')
+  const [notice,setNotice]=useState('')
   const [authError, setAuthError] = useState('')
 
   const loginGoogle = async () => {
@@ -62,15 +64,32 @@ function AuthScreen() {
     }
   }
 
-  const loginEmail = async (e: FormEvent) => {
+  const loginPassword = async (event:FormEvent<HTMLFormElement>)=>{
+    event.preventDefault();if(!email||!password)return
+    setAuthError('');setNotice('');setLoading(true)
+    const {error}=await sb.auth.signInWithPassword({email,password})
+    setLoading(false)
+    if(error)setAuthError(error.message==='Invalid login credentials'?'Email o password non corretti.':error.message)
+  }
+
+  const loginMagicLink = async (e: FormEvent) => {
     e.preventDefault()
     if (!email) return
-    setAuthError('')
+    setAuthError('');setNotice('')
     setLoading(true)
-    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } })
+    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin,shouldCreateUser:false } })
     setLoading(false)
-    if (!error) setSent(true)
+    if (!error) setNotice('Link inviato. Controlla la tua casella email.')
     else setAuthError(error.message)
+  }
+
+  const resetPassword=async()=>{
+    if(!email){setAuthError('Inserisci prima il tuo indirizzo email.');return}
+    setAuthError('');setNotice('');setLoading(true)
+    const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:`${window.location.origin}/auth/update-password`})
+    setLoading(false)
+    if(error)setAuthError(error.message)
+    else setNotice('Ti abbiamo inviato il link per impostare una nuova password.')
   }
 
   return (
@@ -81,28 +100,17 @@ function AuthScreen() {
           <div><p className="font-bold">Bilancio</p><p className="text-xs text-muted-foreground">Finanze personali</p></div>
         </div>
         <div className="rounded-2xl border bg-card p-6 shadow-sm">
-          <h1 className="text-xl font-semibold mb-1">Accedi</h1>
-          <p className="text-sm text-muted-foreground mb-6">I tuoi dati sono privati e sincronizzati su tutti i dispositivi.</p>
-          {sent ? (
-            <div className="rounded-xl bg-primary/10 border border-primary/20 p-4 text-sm text-center">
-              <p className="font-semibold text-primary mb-1">Email inviata ✓</p>
-              <p className="text-muted-foreground">Controlla la tua casella e clicca il link per accedere.</p>
-            </div>
-          ) : (
-            <>
+          <div className="mb-6 flex items-start gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><LockKeyhole className="size-5"/></div><div><h1 className="text-xl font-semibold">Accedi al tuo spazio</h1><p className="mt-1 text-sm text-muted-foreground">Ogni account vede esclusivamente i propri dati finanziari.</p></div></div>
+          <div className="mb-4 grid grid-cols-2 rounded-xl bg-secondary p-1 text-xs font-semibold"><button onClick={()=>{setMode('password');setAuthError('');setNotice('')}} className={`rounded-lg px-3 py-2 ${mode==='password'?'bg-card text-primary shadow-sm':'text-muted-foreground'}`}>Email e password</button><button onClick={()=>{setMode('magic');setAuthError('');setNotice('')}} className={`rounded-lg px-3 py-2 ${mode==='magic'?'bg-card text-primary shadow-sm':'text-muted-foreground'}`}>Link temporaneo</button></div>
+          {notice&&<div className="mb-4 rounded-xl border border-primary/20 bg-primary/10 p-3 text-sm text-primary"><CheckCircle2 className="mr-2 inline size-4"/>{notice}</div>}
+          {mode==='password'?<form onSubmit={loginPassword} className="flex flex-col gap-3"><label className="text-sm font-medium">Email<input type="email" placeholder="nome@esempio.it" value={email} onChange={e=>setEmail(e.target.value)} required autoComplete="email" className="mt-1.5 h-11 w-full rounded-xl border bg-background px-3 text-sm focus:border-primary focus:outline-none"/></label><label className="text-sm font-medium">Password<input type="password" placeholder="La tua password" value={password} onChange={event=>setPassword(event.target.value)} required minLength={8} autoComplete="current-password" className="mt-1.5 h-11 w-full rounded-xl border bg-background px-3 text-sm focus:border-primary focus:outline-none"/></label><button type="submit" disabled={loading} className="mt-1 h-11 rounded-xl bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-50">{loading?'Accesso...':'Accedi'}</button><button type="button" onClick={()=>void resetPassword()} disabled={loading} className="text-xs font-semibold text-primary">Password dimenticata o mai impostata?</button></form>:<form onSubmit={loginMagicLink} className="flex flex-col gap-3"><label className="text-sm font-medium">Email<input type="email" placeholder="nome@esempio.it" value={email} onChange={e=>setEmail(e.target.value)} required autoComplete="email" className="mt-1.5 h-11 w-full rounded-xl border bg-background px-3 text-sm focus:border-primary focus:outline-none"/></label><button type="submit" disabled={loading} className="h-11 rounded-xl bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-50">{loading?'Invio...':'Invia link temporaneo'}</button><p className="text-xs text-muted-foreground">Disponibile solo per gli indirizzi già autorizzati.</p></form>}
+          <div className="relative my-5"><div className="absolute inset-0 flex items-center"><div className="w-full border-t"/></div><div className="relative flex justify-center"><span className="bg-card px-2 text-xs text-muted-foreground">oppure</span></div></div>
               <button onClick={loginGoogle} disabled={loading} className="w-full h-11 rounded-xl border bg-background hover:bg-secondary flex items-center justify-center gap-3 text-sm font-semibold mb-4 transition-colors disabled:opacity-50">
                 <svg className="size-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
                 Continua con Google
               </button>
-              <div className="relative mb-4"><div className="absolute inset-0 flex items-center"><div className="w-full border-t"/></div><div className="relative flex justify-center text-xs text-muted-foreground bg-card px-2">oppure usa qualsiasi email</div></div>
-              <form onSubmit={loginEmail} className="flex flex-col gap-3">
-                <input type="email" placeholder="nome@esempio.it" value={email} onChange={e=>setEmail(e.target.value)} required className="h-11 rounded-xl border bg-background px-3 text-sm focus:outline-none focus:border-primary"/>
-                <button type="submit" disabled={loading} className="h-11 rounded-xl bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50">Invia link di accesso</button>
-                <p className="text-xs text-muted-foreground">Funziona con Outlook, Hotmail, Yahoo, email aziendali e Gmail.</p>
-              </form>
-              {authError&&<p className="mt-3 text-sm text-destructive">{authError}</p>}
-            </>
-          )}
+          {authError&&<p className="mt-3 rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{authError}</p>}
+          <div className="mt-5 rounded-xl border bg-secondary/50 p-3 text-xs text-muted-foreground"><ShieldCheck className="mr-2 inline size-4 text-primary"/><b>Accesso su invito.</b> Un nuovo utente deve essere autorizzato dall’amministratore.</div>
         </div>
         <p className="text-center text-xs text-muted-foreground mt-4">I dati finanziari vengono inviati all’AI solo quando usi Advisor AI.</p>
       </div>
@@ -316,7 +324,7 @@ DATI FINANZIARI (${year}):
               </Card>
             </div>
           )}
-          {view==='setup' && <Setup s={state} set={setState} onSave={save} saveMsg={saveMsg} saving={saving} logout={logout}/>}
+          {view==='setup' && <Setup s={state} set={setState} onSave={save} saveMsg={saveMsg} saving={saving} logout={logout} user={user}/>}
         </div>
       </main>
 
@@ -1203,8 +1211,26 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
   </div>
 }
 
+type ManagedUser={id:string;email:string;createdAt:string;lastSignInAt:string|null;confirmedAt:string|null}
+
+function AccountAccess({user}:{user:any}){
+  const [users,setUsers]=useState<ManagedUser[]>([])
+  const [inviteEmail,setInviteEmail]=useState('')
+  const [loading,setLoading]=useState(false)
+  const [message,setMessage]=useState('')
+  const [error,setError]=useState('')
+  const adminEmail=process.env.NEXT_PUBLIC_ADMIN_EMAIL?.trim().toLowerCase()
+  const isAdmin=Boolean(adminEmail&&user.email?.toLowerCase()===adminEmail)
+  const authorizedFetch=async(input:string,init?:RequestInit)=>{const{data:{session}}=await sb.auth.getSession();if(!session?.access_token)throw new Error('Sessione scaduta.');return fetch(input,{...init,headers:{...init?.headers,Authorization:`Bearer ${session.access_token}`}})}
+  const loadUsers=useCallback(async()=>{if(!isAdmin)return;setLoading(true);setError('');try{const response=await authorizedFetch('/api/admin/users');const data=await response.json();if(!response.ok)throw new Error(data.error??'Impossibile caricare gli utenti.');setUsers(data.users??[])}catch(fetchError){setError(fetchError instanceof Error?fetchError.message:'Errore di connessione.')}finally{setLoading(false)}},[isAdmin])
+  useEffect(()=>{void loadUsers()},[loadUsers])
+  const sendReset=async()=>{setMessage('');setError('');const{error:resetError}=await sb.auth.resetPasswordForEmail(user.email,{redirectTo:`${window.location.origin}/auth/update-password`});if(resetError)setError(resetError.message);else setMessage('Email per cambiare password inviata.')}
+  const invite=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();if(!inviteEmail)return;setLoading(true);setMessage('');setError('');try{const response=await authorizedFetch('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:inviteEmail})});const data=await response.json();if(!response.ok)throw new Error(data.error??'Invito non inviato.');setInviteEmail('');setMessage(`Invito inviato a ${data.user.email}.`);await loadUsers()}catch(inviteError){setError(inviteError instanceof Error?inviteError.message:'Errore di connessione.')}finally{setLoading(false)}}
+  return <><Card><div className="flex items-start gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><ShieldCheck className="size-5"/></div><div className="flex-1"><h3 className="font-semibold">Sicurezza dell’account</h3><p className="mt-1 text-sm text-muted-foreground">Accesso attuale: {user.email}</p><button onClick={()=>void sendReset()} className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-semibold hover:bg-secondary"><KeyRound className="size-4"/>Cambia password via email</button></div></div>{message&&<p className="mt-4 rounded-xl bg-primary/10 p-3 text-sm text-primary">{message}</p>}{error&&<p className="mt-4 rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}</Card>{isAdmin&&<Card><div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold">Gestione accessi</h3><p className="mt-1 text-sm text-muted-foreground">Solo gli indirizzi invitati possono creare un ambiente personale.</p></div><Users className="size-5 text-primary"/></div><form onSubmit={invite} className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="email" required value={inviteEmail} onChange={event=>setInviteEmail(event.target.value)} placeholder="email@esempio.it" className="h-10 flex-1 rounded-xl border bg-background px-3 text-sm"/><button disabled={loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"><Mail className="size-4"/>Invita utente</button></form><div className="mt-5 divide-y"><div className="grid grid-cols-[1fr_auto] gap-3 pb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground"><span>Utente</span><span>Stato</span></div>{users.map(account=><div key={account.id} className="grid grid-cols-[1fr_auto] items-center gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{account.email}</p><p className="text-xs text-muted-foreground">{account.lastSignInAt?`Ultimo accesso ${new Intl.DateTimeFormat('it-IT',{dateStyle:'medium'}).format(new Date(account.lastSignInAt))}`:'Mai entrato'}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${account.confirmedAt?'bg-green-100 text-green-700':'bg-amber-100 text-amber-800'}`}>{account.confirmedAt?'ATTIVO':'INVITATO'}</span></div>)}{loading&&!users.length&&<p className="py-4 text-sm text-muted-foreground">Caricamento utenti...</p>}</div></Card>}</>
+}
+
 // ── SETUP ──
-function Setup({s,set,onSave,saveMsg,saving,logout}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;onSave:()=>void;saveMsg:string;saving:boolean;logout:()=>void}) {
+function Setup({s,set,onSave,saveMsg,saving,logout,user}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;onSave:()=>void;saveMsg:string;saving:boolean;logout:()=>void;user:any}) {
   const update=(k:keyof BudgetState['profile'],v:string)=>set(x=>({...x,profile:{...x.profile,[k]:k==='name'||k==='ateco'?v:Number(v)}}))
   const [newCat,setNewCat]=useState('')
   const [editingCategoryId,setEditingCategoryId]=useState<string|null>(null)
@@ -1213,6 +1239,7 @@ function Setup({s,set,onSave,saveMsg,saving,logout}:{s:BudgetState;set:React.Dis
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <Heading kicker="CONFIGURAZIONE" title="Impostazioni" text="Profilo fiscale, limiti e categorie."/>
+      <AccountAccess user={user}/>
       <Card>
         <h3 className="font-semibold mb-4">Profilo fiscale del lavoro autonomo</h3>
         <div className="grid gap-4 md:grid-cols-2">
