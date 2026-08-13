@@ -3,7 +3,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ArrowDownLeft, BadgeEuro, Bell, BrainCircuit, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronRight, ChevronLeft, CircleDollarSign, Eye, EyeOff, FileText, FileUp, KeyRound, Landmark, LayoutDashboard, LockKeyhole, LogOut, Mail, MoreHorizontal, Pencil, PiggyBank, Plus, ReceiptText, Repeat2, RotateCcw, Save, Settings2, ShieldCheck, Target, Trash2, TrendingUp, Upload, Users, WalletCards, X } from 'lucide-react'
-import { Account, Asset, AssetMovimento, BenefitAccreditMode, BenefitTransaction, BenefitType, BenefitWallet, BudgetState, Deadline, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Invoice, Kind, ResidualMode, SavingsGoal, Simulation, SimulationType, WelfareCategory, assetPlanStatus, createEmptyState, dateFullIt, dateIt, financingInstallmentSchedule, financingPrincipalReduction, financingRemainingInstallments, financingStatusFromSchedule, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, nextInstallmentAfter, patrimoniTotals, remainingInstallmentCount, roundCurrency, toMensile, totals, uid } from '@/lib/budget'
+import { Account, AppModule, Asset, AssetMovimento, BenefitAccreditMode, BenefitTransaction, BenefitType, BenefitWallet, BudgetState, Deadline, EMPTY_MODULES, Expense, Financing, FinancingCategory, Freq, FREQ_LABEL, FREQ_MULT, Income, InterestMode, Invoice, Kind, ResidualMode, SavingsGoal, Simulation, SimulationType, WelfareCategory, assetPlanStatus, createEmptyState, dateFullIt, dateIt, financingInstallmentSchedule, financingPrincipalReduction, financingRemainingInstallments, financingStatusFromSchedule, installmentAmount, installmentEndDate, installmentProgress, isActiveAt, migrate, money, monthlyData, nextInstallmentAfter, patrimoniTotals, remainingInstallmentCount, roundCurrency, toMensile, totals, uid } from '@/lib/budget'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase-config'
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -33,6 +33,18 @@ const navGroups = [
 const planningViews:View[]=['budget','scadenze','previsioni','finanziamenti','obiettivi','abbonamenti']
 const moreViews:View[]=['conti','piva','advisor','setup']
 const navDescription:Record<View,string>={dashboard:'Situazione in un colpo d’occhio',movimenti:'Entrate, spese e accrediti',conti:'Conti, carte e disponibilità',budget:'Limiti per categoria',patrimonio:'Investimenti e benefit',finanziamenti:'Mutui, prestiti e rate',abbonamenti:'Costi ricorrenti attivi',obiettivi:'Risparmio e fondo emergenza',piva:'Fatture, incassi e fisco',scadenze:'Calendario dei pagamenti',previsioni:'Scenari e sostenibilità',advisor:'Analisi sui tuoi dati',setup:'Profilo e personalizzazione'}
+const VIEW_MODULE:Partial<Record<View,AppModule>>={finanziamenti:'financings',obiettivi:'goals',piva:'selfEmployment',previsioni:'simulations',advisor:'advisor'}
+const MODULE_CATALOG = [
+  {id:'financings',label:'Finanziamenti e mutui',description:'Rate, debito residuo e scadenze automatiche.',icon:BadgeEuro},
+  {id:'investments',label:'Investimenti e risparmio',description:'PAC, fondi, depositi e versamenti ricorrenti.',icon:TrendingUp},
+  {id:'insurance',label:'Assicurazioni e previdenza',description:'Polizze, premi, durata e valore maturato.',icon:ShieldCheck},
+  {id:'simulations',label:'Simulazioni future',description:'Confronta mutui, spese e scenari senza alterare i dati reali.',icon:CalendarDays},
+  {id:'goals',label:'Obiettivi di risparmio',description:'Fondo di emergenza e traguardi personali.',icon:Target},
+  {id:'selfEmployment',label:'Lavoro autonomo',description:'Fatture, incassi, costi professionali e fisco.',icon:BriefcaseBusiness},
+  {id:'benefits',label:'Benefit aziendali',description:'Buoni pasto, welfare e carte carburante.',icon:WalletCards},
+  {id:'advisor',label:'Advisor AI',description:'Analisi e domande sui dati che scegli di registrare.',icon:BrainCircuit}
+] as const satisfies ReadonlyArray<{id:AppModule;label:string;description:string;icon:typeof BadgeEuro}>
+const CORE_FEATURES=['Dashboard mensile','Entrate e spese','Conti e carte','Budget','Scadenze','Abbonamenti e ricorrenze']
 
 const TIPO_EMOJI: Record<string,string> = {conto:'🏦',carta:'💳',fido:'📋',contanti:'💵',piva:'🧾'}
 const TIPO_LABEL: Record<string,string> = {conto:'Corrente',carta:'Carta credito',fido:'Fido',contanti:'Contanti',piva:'Professionale'}
@@ -118,10 +130,49 @@ function AuthScreen() {
   )
 }
 
+function Onboarding({user,saving,saveMsg,onComplete}:{user:any;saving:boolean;saveMsg:string;onComplete:(modules:Record<AppModule,boolean>)=>Promise<void>}){
+  const [step,setStep]=useState(0)
+  const [modules,setModules]=useState<Record<AppModule,boolean>>({...EMPTY_MODULES})
+  const userName=user.user_metadata?.full_name?.split(' ')[0]||user.email?.split('@')[0]||'Utente'
+  const groups=[MODULE_CATALOG.slice(0,5),MODULE_CATALOG.slice(5)]
+  const toggle=(id:AppModule)=>setModules(value=>({...value,[id]:!value[id]}))
+  const selectedCount=Object.values(modules).filter(Boolean).length
+  return <div className="min-h-screen bg-background px-4 py-6 sm:grid sm:place-items-center sm:py-10">
+    <div className="mx-auto w-full max-w-3xl overflow-hidden rounded-[28px] border bg-card shadow-xl">
+      <div className="border-b bg-secondary/40 px-5 py-5 sm:px-8">
+        <div className="flex items-center justify-between gap-4"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Landmark className="size-5"/></div><div><p className="font-bold">Bilancio Personale</p><p className="text-xs text-muted-foreground">Il tuo spazio, costruito intorno a te</p></div></div><span className="rounded-full bg-card px-3 py-1 text-xs font-semibold text-primary shadow-sm">{step+1} di 3</span></div>
+        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-primary transition-all" style={{width:`${(step+1)/3*100}%`}}/></div>
+      </div>
+      <div className="px-5 py-7 sm:px-8 sm:py-9">
+        {step===0&&<div>
+          <p className="text-sm font-semibold text-primary">CIAO {String(userName).toUpperCase()}</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Partiamo solo da ciò che ti serve.</h1>
+          <p className="mt-3 max-w-2xl text-muted-foreground">Entrate, spese, conti, budget, scadenze e abbonamenti sono sempre disponibili. Il resto lo scegli tu, senza riempire l’app di sezioni inutili.</p>
+          <div className="mt-7 grid gap-3 sm:grid-cols-2">{CORE_FEATURES.map(item=><div key={item} className="flex items-center gap-3 rounded-2xl border bg-background p-4"><div className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><CheckCircle2 className="size-4"/></div><span className="text-sm font-semibold">{item}</span></div>)}</div>
+          <div className="mt-6 rounded-2xl border border-primary/20 bg-primary/5 p-4"><p className="text-xs font-bold uppercase tracking-widest text-primary">Dati reali: zero</p><p className="mt-1 text-sm text-muted-foreground">Gli esempi servono soltanto a spiegare le schermate e non entrano mai nei calcoli.</p></div>
+        </div>}
+        {step>0&&<div>
+          <p className="text-sm font-semibold text-primary">{step===1?'PATRIMONIO E PIANIFICAZIONE':'STRUMENTI PERSONALI'}</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">{step===1?'Cosa vuoi tenere sotto controllo?':'C’è altro che fa parte della tua vita?'}</h1>
+          <p className="mt-2 text-muted-foreground">Seleziona anche più opzioni. Potrai attivarle o nasconderle in qualsiasi momento dalle Impostazioni.</p>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">{groups[step-1].map(({id,label,description,icon:Icon})=>{const selected=modules[id];return <button type="button" key={id} aria-pressed={selected} onClick={()=>toggle(id)} className={`flex items-start gap-4 rounded-2xl border p-4 text-left transition-all ${selected?'border-primary bg-primary/10 shadow-sm':'bg-background hover:border-primary/40 hover:bg-secondary/30'}`}><div className={`grid size-11 shrink-0 place-items-center rounded-xl ${selected?'bg-primary text-primary-foreground':'bg-secondary text-primary'}`}><Icon className="size-5"/></div><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><p className="font-semibold">{label}</p><span className={`grid size-5 place-items-center rounded-full border ${selected?'border-primary bg-primary text-primary-foreground':'border-border'}`}>{selected&&<CheckCircle2 className="size-3.5"/>}</span></div><p className="mt-1 text-sm leading-snug text-muted-foreground">{description}</p></div></button>})}</div>
+          {step===2&&<p className="mt-5 rounded-xl bg-secondary/60 p-3 text-sm text-muted-foreground"><b className="text-foreground">{selectedCount} moduli selezionati.</b> Disattivarli in futuro li nasconderà soltanto: i dati resteranno al sicuro.</p>}
+        </div>}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t bg-secondary/20 px-5 py-4 sm:px-8">
+        <button type="button" onClick={()=>setStep(value=>Math.max(0,value-1))} disabled={step===0||saving} className="h-11 rounded-xl border bg-card px-4 text-sm font-semibold disabled:invisible">Indietro</button>
+        <div className="text-center text-xs text-destructive">{saveMsg.startsWith('❌')?saveMsg:''}</div>
+        {step<2?<button type="button" onClick={()=>setStep(value=>value+1)} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground">Continua<ChevronRight className="size-4"/></button>:<button type="button" disabled={saving} onClick={()=>void onComplete(modules)} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:opacity-50">{saving?'Creo il tuo spazio...':'Entra nel tuo Bilancio'}<ChevronRight className="size-4"/></button>}
+      </div>
+    </div>
+  </div>
+}
+
 // ── MAIN APP ──
 export function BudgetDashboard() {
   const [user, setUser] = useState<any>(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const [dataLoading,setDataLoading]=useState(true)
   const [state, setState] = useState<BudgetState>(() => createEmptyState())
   const [view, setView] = useState<View>('dashboard')
   const [mobileMenu,setMobileMenu]=useState<'planning'|'more'|null>(null)
@@ -148,23 +199,29 @@ export function BudgetDashboard() {
 
   // Carica dati da Supabase quando utente loggato
   useEffect(() => {
-    if (!user) return
+    if (!user) { setDataLoading(false); return }
+    let cancelled=false
+    setDataLoading(true)
     setState(createEmptyState())
-    sb.from('user_data').select('data').eq('id', user.id).single().then(({ data, error }) => {
+    sb.from('user_data').select('data').eq('id', user.id).maybeSingle().then(({ data }) => {
+      if(cancelled)return
       if (data?.data && Object.keys(data.data).length > 0) {
         setState(migrate(data.data))
       }
+      setDataLoading(false)
     })
+    return()=>{cancelled=true}
   }, [user])
 
   const saveToDb = useCallback(async (s: BudgetState) => {
-    if (!user) return
+    if (!user) return false
     setSaving(true)
     setSaveMsg('')
     const { error } = await sb.from('user_data').upsert({ id: user.id, data: s, updated_at: new Date().toISOString() })
     setSaving(false)
     setSaveMsg(error ? '❌ Errore salvataggio' : '✓ Salvato')
     setTimeout(() => setSaveMsg(''), 3000)
+    return !error
   }, [user])
 
   const save = () => saveToDb(state)
@@ -181,8 +238,24 @@ export function BudgetDashboard() {
     aiBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [aiMessages, aiLoading])
 
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center text-muted-foreground text-sm">Caricamento...</div>
+  useEffect(()=>{
+    const requiredModule=VIEW_MODULE[view]
+    if(requiredModule&&!state.preferences.modules[requiredModule])setView('dashboard')
+  },[state.preferences.modules,view])
+
+  const completeOnboarding=async(modules:Record<AppModule,boolean>)=>{
+    const next:BudgetState={
+      ...state,
+      preferences:{onboardingCompleted:true,modules},
+      dashboard:{...state.dashboard,goals:modules.goals}
+    }
+    const saved=await saveToDb(next)
+    if(saved){setState(next);setView('dashboard')}
+  }
+
+  if (authLoading||(user&&dataLoading)) return <div className="min-h-screen flex items-center justify-center text-muted-foreground text-sm">Caricamento del tuo spazio...</div>
   if (!user) return <AuthScreen />
+  if(!state.preferences.onboardingCompleted)return <Onboarding user={user} saving={saving} saveMsg={saveMsg} onComplete={completeOnboarding}/>
 
   const active = nav.find(n => n[0] === view)!
 
@@ -239,9 +312,11 @@ DATI FINANZIARI (${year}):
   }
 
   const userName = user.user_metadata?.full_name?.split(' ')[0] || user.email?.split('@')[0] || 'Utente'
-  const openView=(id:View)=>{setView(id);setMobileMenu(null);if(id==='advisor'&&!aiAutoRan){setAiAutoRan(true);void sendAI('Analizza la mia situazione finanziaria: evidenzia 3 punti di forza, 2 rischi urgenti e 3 azioni concrete da fare subito.')}}
-  const sectionLabel=navGroups.find(group=>group.ids.includes(view))?.label.toLocaleLowerCase('it-IT').replace(/^./,letter=>letter.toUpperCase())??'Bilancio'
-  const sheetItems=(mobileMenu==='planning'?planningViews:moreViews).map(id=>nav.find(item=>item[0]===id)!).filter(Boolean)
+  const isViewEnabled=(id:View)=>{const requiredModule=VIEW_MODULE[id];return !requiredModule||state.preferences.modules[requiredModule]}
+  const visibleNavGroups=navGroups.map(group=>({...group,ids:group.ids.filter(isViewEnabled)})).filter(group=>group.ids.length)
+  const openView=(id:View)=>{if(!isViewEnabled(id)){setView('setup');setMobileMenu(null);return}setView(id);setMobileMenu(null);if(id==='advisor'&&!aiAutoRan){setAiAutoRan(true);void sendAI('Analizza la mia situazione finanziaria: evidenzia 3 punti di forza, 2 rischi urgenti e 3 azioni concrete da fare subito.')}}
+  const sectionLabel=visibleNavGroups.find(group=>group.ids.includes(view))?.label.toLocaleLowerCase('it-IT').replace(/^./,letter=>letter.toUpperCase())??'Bilancio'
+  const sheetItems=(mobileMenu==='planning'?planningViews:moreViews).filter(isViewEnabled).map(id=>nav.find(item=>item[0]===id)!).filter(Boolean)
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground">
@@ -252,7 +327,7 @@ DATI FINANZIARI (${year}):
           <div><p className="font-bold text-sm">Bilancio</p><p className="text-xs text-muted-foreground truncate max-w-[110px]">{userName}</p></div>
         </div>
         <nav className="flex flex-1 flex-col gap-4">
-          {navGroups.map(group=><section key={group.label}><p className="mb-1 px-3 text-[10px] font-bold tracking-[.16em] text-muted-foreground/60">{group.label}</p><div className="flex flex-col gap-0.5">{group.ids.map(id=>{const item=nav.find(value=>value[0]===id)!;const [,label,Icon]=item;return <button key={id} onClick={()=>openView(id)} className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${view===id?'bg-primary text-primary-foreground shadow-sm':'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}><Icon className="size-4 shrink-0"/>{label}<ChevronRight className="ml-auto size-3 opacity-40"/></button>})}</div></section>)}
+          {visibleNavGroups.map(group=><section key={group.label}><p className="mb-1 px-3 text-[10px] font-bold tracking-[.16em] text-muted-foreground/60">{group.label}</p><div className="flex flex-col gap-0.5">{group.ids.map(id=>{const item=nav.find(value=>value[0]===id)!;const [,label,Icon]=item;return <button key={id} onClick={()=>openView(id)} className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${view===id?'bg-primary text-primary-foreground shadow-sm':'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}><Icon className="size-4 shrink-0"/>{label}<ChevronRight className="ml-auto size-3 opacity-40"/></button>})}</div></section>)}
         </nav>
         <div className="mt-4 border-t pt-4 flex flex-col gap-2">
           <button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
@@ -287,17 +362,17 @@ DATI FINANZIARI (${year}):
         </header>
 
         <div className="mx-auto max-w-5xl px-5 py-6 md:px-8">
-          {view==='dashboard' && <Dashboard s={state} year={year}/>}
-          {view==='movimenti' && <Movements s={state} set={setState} year={year}/>}
-          {view==='conti' && <Accounts s={state} set={setState}/>}
+          {view==='dashboard' && <Dashboard s={state} year={year} onOpen={openView}/>}
+          {view==='movimenti' && <Movements s={state} set={setState} year={year} modules={state.preferences.modules}/>}
+          {view==='conti' && <Accounts s={state} set={setState} selfEmploymentEnabled={state.preferences.modules.selfEmployment}/>}
           {view==='budget' && <Budgets s={state} set={setState} year={year}/>}
-          {view==='patrimonio' && <Assets s={state} set={setState}/>}
-          {view==='finanziamenti' && <Financings s={state} set={setState} onOpenDeadlines={()=>setView('scadenze')}/>}
+          {view==='patrimonio' && <Assets s={state} set={setState} modules={state.preferences.modules} onOpenSettings={()=>setView('setup')}/>}
+          {view==='finanziamenti' && <Financings s={state} set={setState} selfEmploymentEnabled={state.preferences.modules.selfEmployment} onOpenDeadlines={()=>setView('scadenze')}/>}
           {view==='abbonamenti' && <Subscriptions s={state} set={setState} onOpenMovements={()=>setView('movimenti')}/>}
           {view==='obiettivi' && <Goals s={state} set={setState} year={year}/>}
           {view==='piva' && <SelfEmployment s={state} set={setState} year={year} userId={user.id}/>}
-          {view==='scadenze' && <Deadlines s={state} set={setState}/>}
-          {view==='previsioni' && <Previsioni s={state} set={setState}/>}
+          {view==='scadenze' && <Deadlines s={state} set={setState} financingsEnabled={state.preferences.modules.financings}/>}
+          {view==='previsioni' && <Previsioni s={state} set={setState} selfEmploymentEnabled={state.preferences.modules.selfEmployment}/>}
           {view==='advisor' && (
             <div className="flex flex-col gap-6">
               <Heading kicker="ADVISOR AI" title="Il tuo consulente finanziario" text="Analisi sui tuoi dati reali. Fai domande libere."/>
@@ -330,7 +405,7 @@ DATI FINANZIARI (${year}):
 
       {mobileMenu&&<div className="fixed inset-0 z-40 bg-black/35 backdrop-blur-[2px] lg:hidden" onClick={()=>setMobileMenu(null)}><div className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-[28px] border-t bg-card px-5 pb-7 pt-3 shadow-2xl" onClick={event=>event.stopPropagation()}><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-border"/><div className="mb-4 flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">{mobileMenu==='planning'?'Pianifica':'Tutto il resto'}</p><h2 className="mt-1 text-xl font-semibold">{mobileMenu==='planning'?'Organizza il futuro':'Conti e strumenti'}</h2><p className="mt-1 text-sm text-muted-foreground">{mobileMenu==='planning'?'Budget, scadenze, debiti e obiettivi.':'Funzioni utili, senza affollare la barra.'}</p></div><button onClick={()=>setMobileMenu(null)} className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary" aria-label="Chiudi menu"><X className="size-4"/></button></div><div className="grid grid-cols-2 gap-3">{sheetItems.map(([id,label,Icon])=><button key={id} onClick={()=>openView(id)} className={`rounded-2xl border p-4 text-left transition-colors ${view===id?'border-primary bg-primary/10':'bg-background hover:bg-secondary'}`}><div className={`grid size-9 place-items-center rounded-xl ${view===id?'bg-primary text-primary-foreground':'bg-secondary text-primary'}`}><Icon className="size-4"/></div><p className="mt-3 text-sm font-semibold">{label}</p><p className="mt-1 text-[11px] leading-snug text-muted-foreground">{navDescription[id]}</p></button>)}</div></div></div>}
       <nav className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-5 rounded-[24px] border bg-card/95 p-1.5 shadow-2xl backdrop-blur lg:hidden" style={{paddingBottom:'max(.375rem, env(safe-area-inset-bottom))'}}>
-        {([['dashboard','Home',LayoutDashboard],['movimenti','Movimenti',ArrowDownLeft],['planning','Pianifica',TrendingUp],['patrimonio','Patrimonio',Landmark],['more','Altro',MoreHorizontal]] as const).map(([id,label,Icon])=>{const selected=id==='planning'?planningViews.includes(view):id==='more'?moreViews.includes(view):view===id;return <button key={id} onClick={()=>id==='planning'?setMobileMenu(value=>value==='planning'?null:'planning'):id==='more'?setMobileMenu(value=>value==='more'?null:'more'):openView(id)} className={`flex min-w-0 flex-col items-center gap-1 rounded-[18px] px-1 py-2 text-[10px] font-semibold transition-colors ${selected?'bg-primary/10 text-primary':'text-muted-foreground'}`}><Icon className={`size-[18px] ${selected?'stroke-[2.5]':''}`}/><span className="w-full truncate text-center">{label}</span></button>})}
+        {([['dashboard','Home',LayoutDashboard],['movimenti','Movimenti',ArrowDownLeft],['planning','Pianifica',TrendingUp],['patrimonio','Patrimonio',Landmark],['more','Altro',MoreHorizontal]] as const).map(([id,label,Icon])=>{const selected=id==='planning'?planningViews.filter(isViewEnabled).includes(view):id==='more'?moreViews.filter(isViewEnabled).includes(view):view===id;return <button key={id} onClick={()=>id==='planning'?setMobileMenu(value=>value==='planning'?null:'planning'):id==='more'?setMobileMenu(value=>value==='more'?null:'more'):openView(id)} className={`flex min-w-0 flex-col items-center gap-1 rounded-[18px] px-1 py-2 text-[10px] font-semibold transition-colors ${selected?'bg-primary/10 text-primary':'text-muted-foreground'}`}><Icon className={`size-[18px] ${selected?'stroke-[2.5]':''}`}/><span className="w-full truncate text-center">{label}</span></button>})}
       </nav>
     </div>
   )
@@ -370,7 +445,7 @@ const Gauge = ({label,value,detail,invert=false}:{label:string;value:number;deta
 }
 
 // ── DASHBOARD ──
-function Dashboard({s,year}:{s:BudgetState;year:number}) {
+function Dashboard({s,year,onOpen}:{s:BudgetState;year:number;onOpen:(view:View)=>void}) {
   const today=new Date().toISOString().slice(0,10),t=totals(s,year),m=monthlyData(s,year)
   const [selectedMonth,setSelectedMonth]=useState(today.slice(0,7))
   const [showValues,setShowValues]=useState(true)
@@ -406,15 +481,17 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
   })
   const alerts=[
     ...s.deadlines.filter(item=>!item.paid&&item.date<=addDays(7)).map(item=>({id:`d-${item.id}`,date:item.date,title:item.title,detail:item.date<today?'Scaduta':item.date===today?'Scade oggi':'Entro 7 giorni',amount:item.amount,urgent:item.date<=today})),
-    ...s.financings.flatMap(item=>financingInstallmentSchedule(item).slice(0,1).filter(rate=>rate.date<=addDays(7)).map(rate=>({id:`f-${item.id}`,date:rate.date,title:`Rata ${item.name}`,detail:rate.date<today?'Scaduta':rate.date===today?'Scade oggi':'Entro 7 giorni',amount:rate.amount,urgent:rate.date<=today}))),
+    ...(s.preferences.modules.financings?s.financings:[]).flatMap(item=>financingInstallmentSchedule(item).slice(0,1).filter(rate=>rate.date<=addDays(7)).map(rate=>({id:`f-${item.id}`,date:rate.date,title:`Rata ${item.name}`,detail:rate.date<today?'Scaduta':rate.date===today?'Scade oggi':'Entro 7 giorni',amount:rate.amount,urgent:rate.date<=today}))),
     ...s.expenses.filter(item=>item.subscription?.endDate&&item.subscription.endDate>=today&&item.subscription.endDate<=addDays(30)).map(item=>({id:`s-${item.id}`,date:item.subscription!.endDate!,title:`Termina ${item.description}`,detail:'Abbonamento in scadenza',amount:item.amount,urgent:false})),
-    ...s.invoices.filter(item=>!item.paid&&item.dueDate&&item.dueDate<=addDays(7)).map(item=>({id:`i-${item.id}`,date:item.dueDate!,title:`Fattura ${item.number} · ${item.customer}`,detail:item.dueDate!<today?'Incasso in ritardo':item.dueDate===today?'Incasso previsto oggi':'Incasso entro 7 giorni',amount:item.amount,urgent:item.dueDate!<=today})),
-    ...s.benefits.filter(item=>item.balance>0&&item.expiryDate&&item.expiryDate<=addDays(30)).map(item=>({id:`b-${item.id}`,date:item.expiryDate!,title:`Scade ${item.name}`,detail:item.expiryDate!<today?'Credito scaduto':'Benefit in scadenza',amount:item.balance,urgent:item.expiryDate!<=today}))
+    ...(s.preferences.modules.selfEmployment?s.invoices:[]).filter(item=>!item.paid&&item.dueDate&&item.dueDate<=addDays(7)).map(item=>({id:`i-${item.id}`,date:item.dueDate!,title:`Fattura ${item.number} · ${item.customer}`,detail:item.dueDate!<today?'Incasso in ritardo':item.dueDate===today?'Incasso previsto oggi':'Incasso entro 7 giorni',amount:item.amount,urgent:item.dueDate!<=today})),
+    ...(s.preferences.modules.benefits?s.benefits:[]).filter(item=>item.balance>0&&item.expiryDate&&item.expiryDate<=addDays(30)).map(item=>({id:`b-${item.id}`,date:item.expiryDate!,title:`Scade ${item.name}`,detail:item.expiryDate!<today?'Credito scaduto':'Benefit in scadenza',amount:item.balance,urgent:item.expiryDate!<=today}))
   ].sort((a,b)=>a.date.localeCompare(b.date))
   const topGoals=[...s.goals].sort((a,b)=>(b.targetAmount?b.currentAmount/b.targetAmount:0)-(a.targetAmount?a.currentAmount/a.targetAmount:0)).slice(0,3)
+  const isPristine=!s.accounts.length&&!s.incomes.length&&!s.expenses.length
   return (
     <div className={`flex flex-col gap-7 ${showValues?'':'[&_.sensitive]:select-none [&_.sensitive]:blur-[7px] [&_.sensitive]:pointer-events-none'}`}>
       <div className="flex flex-wrap items-start justify-between gap-4"><Heading kicker="PANORAMICA" title="Prima il mese, poi il patrimonio." text="Entrate e impegni mensili davanti; debiti e patrimonio restano una fotografia separata."/><button onClick={()=>setShowValues(value=>!value)} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-secondary" aria-label={showValues?'Nascondi importi':'Mostra importi'}>{showValues?<EyeOff className="size-4"/>:<Eye className="size-4"/>}{showValues?'Nascondi dati':'Mostra dati'}</button></div>
+      {isPristine&&<Card className="overflow-hidden border-primary/25 bg-gradient-to-br from-primary/10 via-card to-card"><div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between"><div className="max-w-xl"><p className="text-xs font-bold uppercase tracking-widest text-primary">INIZIA DA QUI</p><h3 className="mt-2 text-2xl font-semibold">Il tuo Bilancio è pronto e parte da zero.</h3><p className="mt-2 text-sm text-muted-foreground">Aggiungi prima il conto che usi ogni giorno, poi un’entrata e una spesa. I grafici si costruiranno automaticamente sui tuoi dati reali.</p><div className="mt-4 flex flex-wrap gap-2"><button onClick={()=>onOpen('conti')} className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">1. Aggiungi un conto</button><button onClick={()=>onOpen('movimenti')} className="h-10 rounded-xl border bg-card px-4 text-sm font-semibold">2. Registra un movimento</button></div></div><div className="w-full rounded-2xl border border-dashed border-primary/30 bg-card/80 p-4 md:w-64"><div className="flex items-center justify-between"><span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary">ESEMPIO · NON CONTEGGIATO</span><ArrowDownLeft className="size-4 text-green-600"/></div><p className="mt-4 text-sm font-semibold">Stipendio mensile</p><p className="mt-1 text-2xl font-semibold text-green-700">+ 1.500,00 €</p><p className="mt-1 text-xs text-muted-foreground">Entrata personale ricorrente</p></div></div></Card>}
       <Card className="p-4"><div className="flex items-center justify-between gap-4"><button onClick={()=>shiftMonth(-1)} className="grid size-9 place-items-center rounded-xl border hover:bg-secondary" aria-label="Mese precedente"><ChevronLeft className="size-4"/></button><div className="text-center"><p className="text-xs font-semibold uppercase tracking-widest text-primary">Flusso mensile</p><h3 className="mt-1 text-xl font-semibold capitalize">{monthLabel}</h3></div><button onClick={()=>shiftMonth(1)} className="grid size-9 place-items-center rounded-xl border hover:bg-secondary" aria-label="Mese successivo"><ChevronRight className="size-4"/></button></div></Card>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Entrate previste" value={monthlyIncome} detail={`${recurringIncomes.length} ricorrenti · ${oneOffIncomes.length} una tantum`}/>
@@ -426,7 +503,7 @@ function Dashboard({s,year}:{s:BudgetState;year:number}) {
       {s.dashboard.forecast&&<section><div className="mb-3"><h3 className="text-xl font-semibold">Previsione di liquidità</h3><p className="text-sm text-muted-foreground">Stima a 30, 60 e 90 giorni basata sui flussi ricorrenti e sulle scadenze manuali.</p></div><div className="grid gap-4 sm:grid-cols-3">{forecast.map(item=><Metric key={item.days} label={`Tra ${item.days} giorni`} value={item.value} detail={`Margine stimato ${money.format(monthlyMargin)}/mese`} warn={item.value<0}/>)}</div></section>}
       {s.dashboard.alerts&&<Card><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><Bell className="size-5"/></div><div><h3 className="font-semibold">Avvisi e prossimi pagamenti</h3><p className="text-sm text-muted-foreground">Rate, fatture e scadenze che richiedono attenzione.</p></div></div>{alerts.length?<div className="mt-4 divide-y">{alerts.slice(0,6).map(item=><div key={item.id} className="flex items-center gap-3 py-3"><div className={`size-2 rounded-full ${item.urgent?'bg-destructive':'bg-amber-500'}`}/><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{item.title}</p><p className="text-xs text-muted-foreground">{dateFullIt(item.date)} · {item.detail}</p></div><b className="sensitive text-sm">{money.format(item.amount)}</b></div>)}</div>:<p className="mt-4 rounded-xl bg-secondary/60 p-4 text-sm text-muted-foreground">Nessuna urgenza nei prossimi giorni.</p>}</Card>}
       {s.dashboard.subscriptions&&<Card><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary">IMPEGNI DEL MESE</p><h3 className="mt-2 text-lg font-semibold">Costi ricorrenti e abbonamenti</h3><p className="mt-1 text-sm text-muted-foreground">Iliad e ogni voce marcata come ricorrente compaiono qui automaticamente.</p></div><div className="rounded-xl bg-primary/10 px-4 py-3 text-right"><p className="text-xs text-primary">Impatto mensile</p><p className="sensitive mt-1 text-2xl font-semibold text-primary">{money.format(recurringExpenses)}</p></div></div>{recurringCosts.length?<div className="mt-4 grid gap-2 border-t pt-4 md:grid-cols-2">{recurringCosts.slice(0,8).map(expense=><div key={expense.id} className="flex items-center justify-between gap-3 rounded-xl bg-secondary/60 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">{expense.description}</p><p className="text-xs text-muted-foreground">{expense.category||'Senza categoria'} · {FREQ_LABEL[expense.freq]}</p></div><b className="sensitive text-sm">{money.format(toMensile(expense.amount,expense.freq))}/mese</b></div>)}</div>:<p className="mt-4 border-t pt-4 text-sm text-muted-foreground">Nessun costo ricorrente registrato.</p>}</Card>}
-      {s.dashboard.goals&&<Card><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><Target className="size-5"/></div><div><h3 className="font-semibold">Obiettivi di risparmio</h3><p className="text-sm text-muted-foreground">Avanzamento dei tuoi traguardi principali.</p></div></div>{topGoals.length?<div className="mt-4 grid gap-3 md:grid-cols-3">{topGoals.map(goal=>{const progress=goal.targetAmount>0?Math.min(100,goal.currentAmount/goal.targetAmount*100):0;return <div key={goal.id} className="rounded-xl bg-secondary/60 p-3"><div className="flex justify-between gap-2 text-sm"><b className="truncate">{goal.name}</b><span className="sensitive">{progress.toFixed(0)}%</span></div><div className="sensitive mt-2 h-2 overflow-hidden rounded-full bg-background"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div><p className="sensitive mt-2 text-xs text-muted-foreground">{money.format(goal.currentAmount)} di {money.format(goal.targetAmount)}</p></div>})}</div>:<p className="mt-4 rounded-xl bg-secondary/60 p-4 text-sm text-muted-foreground">Nessun obiettivo impostato.</p>}</Card>}
+      {s.preferences.modules.goals&&s.dashboard.goals&&<Card><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><Target className="size-5"/></div><div><h3 className="font-semibold">Obiettivi di risparmio</h3><p className="text-sm text-muted-foreground">Avanzamento dei tuoi traguardi principali.</p></div></div>{topGoals.length?<div className="mt-4 grid gap-3 md:grid-cols-3">{topGoals.map(goal=>{const progress=goal.targetAmount>0?Math.min(100,goal.currentAmount/goal.targetAmount*100):0;return <div key={goal.id} className="rounded-xl bg-secondary/60 p-3"><div className="flex justify-between gap-2 text-sm"><b className="truncate">{goal.name}</b><span className="sensitive">{progress.toFixed(0)}%</span></div><div className="sensitive mt-2 h-2 overflow-hidden rounded-full bg-background"><div className="h-full rounded-full bg-primary" style={{width:`${progress}%`}}/></div><p className="sensitive mt-2 text-xs text-muted-foreground">{money.format(goal.currentAmount)} di {money.format(goal.targetAmount)}</p></div>})}</div>:<p className="mt-4 rounded-xl bg-secondary/60 p-4 text-sm text-muted-foreground">Nessun obiettivo impostato.</p>}</Card>}
       {s.dashboard.charts&&<section className="flex flex-col gap-4"><div><h3 className="text-xl font-semibold">Grafici e indicatori</h3><p className="text-sm text-muted-foreground">Flussi, composizione delle spese e rapporti chiave aggiornati con i dati inseriti.</p></div><div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
         <Card><h3 className="font-semibold">Entrate e spese per mese</h3><p className="text-sm text-muted-foreground">Le ricorrenze vengono proiettate su ogni mese attivo · {year}</p><div className="sensitive mt-4 h-64"><ResponsiveContainer><BarChart data={m} barGap={4}><CartesianGrid vertical={false} stroke="var(--border)"/><XAxis dataKey="month" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false}/><Tooltip formatter={v=>money.format(Number(v))}/><Bar dataKey="entrate" name="Entrate" fill="var(--chart-1)" radius={[5,5,0,0]}/><Bar dataKey="spese" name="Spese" fill="var(--chart-2)" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></Card>
         <Card><h3 className="font-semibold">Spese per categoria</h3>{cats.length?<><div className="sensitive h-44"><ResponsiveContainer><PieChart><Pie data={cats} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72}>{cats.map((_,i)=><Cell key={i} fill={`var(--chart-${i%5+1})`}/>)}</Pie><Tooltip formatter={v=>money.format(Number(v))}/></PieChart></ResponsiveContainer></div>{cats.slice(0,5).map(x=><div key={x.name} className="flex justify-between py-1 text-sm"><span className="text-muted-foreground">{x.name}</span><b className="sensitive">{money.format(x.value)}</b></div>)}</>:<p className="grid h-56 place-items-center text-sm text-muted-foreground">Inserisci delle spese per vedere la composizione.</p>}</Card>
@@ -466,7 +543,7 @@ function parseCsvDate(value:string) {
 }
 
 // ── MOVIMENTI ──
-function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;year:number}) {
+function Movements({s,set,year,modules}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;year:number;modules:Record<AppModule,boolean>}) {
   const [mode,setMode] = useState<'entrata'|'spesa'>('spesa')
   const [freq,setFreq] = useState<Freq>('mensile')
   const [isSubscription,setIsSubscription] = useState(false)
@@ -539,7 +616,7 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
         const amount=Math.abs(rawAmount),key=`${isExpense?'e':'i'}|${date}|${description.toLowerCase()}|${amount.toFixed(2)}`
         if(known.has(key)){skipped+=1;continue}
         const kindText=indexes.kind>=0?(row[indexes.kind]??'').toLowerCase():''
-        const kind:Kind=kindText.includes('piva')||kindText.includes('iva')?'piva':'personale'
+        const kind:Kind=modules.selfEmployment&&(kindText.includes('piva')||kindText.includes('iva'))?'piva':'personale'
         const accountName=indexes.account>=0?(row[indexes.account]??'').trim().toLowerCase():''
         const accountId=current.accounts.find(account=>account.name.toLowerCase()===accountName)?.id
         if(isExpense)expenses.unshift({id:uid(),date,description,amount,kind,accountId,recurring:false,freq:'unica',category:indexes.category>=0?(row[indexes.category]||'Importato'):'Importato'})
@@ -555,7 +632,7 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
   return (
     <div className="flex flex-col gap-6">
       <Heading kicker="REGISTRO" title="Entrate e spese" text={`Movimenti ${year}, già separati per natura e attività.`}/>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Entrate personali" value={sum(personalIncomes)}/><Metric label="Incassi lavoro autonomo" value={sum(pivaIncomes)}/><Metric label="Accrediti benefit" value={sum(benefitIncomes)} detail="Non aumentano la liquidità"/><Metric label="Spese complessive" value={sum(expenses)} detail="Include quelle pagate con benefit"/></div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Entrate personali" value={sum(personalIncomes)}/>{modules.selfEmployment&&<Metric label="Incassi lavoro autonomo" value={sum(pivaIncomes)}/>} {modules.benefits&&<Metric label="Accrediti benefit" value={sum(benefitIncomes)} detail="Non aumentano la liquidità"/>}<Metric label="Spese complessive" value={sum(expenses)} detail={modules.benefits?'Include quelle pagate con benefit':undefined}/></div>
       <Card><div className="flex flex-wrap items-center justify-between gap-4"><div><h3 className="font-semibold">Importa movimenti bancari</h3><p className="mt-1 text-sm text-muted-foreground">CSV con Data, Descrizione o Causale e Importo. Entrate positive e spese negative; i duplicati vengono ignorati.</p>{csvMsg&&<p className="mt-2 text-sm font-semibold text-primary">{csvMsg}</p>}</div><label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-xl border bg-background px-4 text-sm font-semibold hover:bg-secondary"><FileUp className="size-4"/>Scegli CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void importCsv(file);e.currentTarget.value=''}}/></label></div></Card>
       <form key={editItem?.id??'new-movement'} onSubmit={submit} className="grid gap-3 rounded-2xl border bg-card p-5 md:grid-cols-4">
         {editing&&<div className="col-span-full flex items-center justify-between rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary"><span>Stai modificando “{editItem?.description}”</span><button type="button" onClick={resetForm} className="text-xs">Annulla modifica</button></div>}
@@ -563,8 +640,8 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
         <Field label="Data"><input name="date" type="date" required defaultValue={editItem?.date??new Date().toISOString().slice(0,10)}/></Field>
         <Field label="Descrizione"><input name="description" required defaultValue={editItem?.description}/></Field>
         <Field label="Importo (€)"><input name="amount" type="number" min=".01" step=".01" required defaultValue={editItem?.amount}/></Field>
-        <Field label="Ambito"><select name="kind" defaultValue={editItem?.kind??'personale'}><option value="personale">Personale</option><option value="piva">Lavoro autonomo</option></select></Field>
-        {mode==='spesa'&&<Field label="Come hai pagato?"><select value={paymentMode} onChange={event=>{setPaymentMode(event.target.value as typeof paymentMode);setFormError('')}}><option value="cash">Conto, carta o contanti</option><option value="benefit">Solo con un benefit</option><option value="mixed">Pagamento misto</option></select></Field>}
+        <Field label="Ambito"><select name="kind" defaultValue={modules.selfEmployment?editItem?.kind??'personale':'personale'}><option value="personale">Personale</option>{modules.selfEmployment&&<option value="piva">Lavoro autonomo</option>}</select></Field>
+        {mode==='spesa'&&modules.benefits&&<Field label="Come hai pagato?"><select value={paymentMode} onChange={event=>{setPaymentMode(event.target.value as typeof paymentMode);setFormError('')}}><option value="cash">Conto, carta o contanti</option><option value="benefit">Solo con un benefit</option><option value="mixed">Pagamento misto</option></select></Field>}
         {(mode==='entrata'||paymentMode!=='benefit')&&<Field label={paymentMode==='mixed'?'Conto per la parte restante':'Conto (facoltativo)'}><select name="accountId" defaultValue={editItem?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(a=><option key={a.id} value={a.id}>{TIPO_EMOJI[a.type]} {a.name}</option>)}</select></Field>}
         {mode==='spesa'&&paymentMode!=='cash'&&<Field label="Benefit utilizzato"><select value={selectedBenefitId} onChange={event=>{setSelectedBenefitId(event.target.value);setFormError('')}} required><option value="">Scegli...</option>{s.benefits.filter(item=>item.balance>0||item.id===editExpense?.benefitId).map(item=><option key={item.id} value={item.id}>{item.name} · {money.format(item.balance)}</option>)}</select></Field>}
         {mode==='spesa'&&paymentMode==='mixed'&&<Field label="Quota pagata con benefit (€)"><input type="number" min=".01" step=".01" value={benefitAmount||''} onChange={event=>{setBenefitAmount(Number(event.target.value));setFormError('')}} required/></Field>}
@@ -576,8 +653,8 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
         {formError&&<p className="col-span-full rounded-xl bg-destructive/10 px-3 py-2 text-sm font-semibold text-destructive">{formError}</p>}
         <button className="col-span-full h-11 rounded-xl bg-primary px-4 font-semibold text-primary-foreground">{editing?<Pencil className="mr-2 inline size-4"/>:<Plus className="mr-2 inline size-4"/>}{editing?'Salva modifiche':'Aggiungi'}</button>
       </form>
-      <div className="grid gap-5 lg:grid-cols-2"><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Entrate personali</h3><p className="text-sm text-muted-foreground">Stipendio e altri introiti personali</p></div>{incomeList(personalIncomes,'Nessuna entrata personale')}</section><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Incassi lavoro autonomo</h3><p className="text-sm text-muted-foreground">Fatture pagate e compensi professionali</p></div>{incomeList(pivaIncomes,'Nessun incasso professionale')}</section></div>
-      <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Accrediti benefit</h3><p className="text-sm text-muted-foreground">Valore ricevuto su buoni pasto, welfare e carte carburante: visibile, ma separato dal reddito monetario.</p></div>{incomeList(benefitIncomes,'Nessun accredito benefit registrato')}</section>
+      <div className={`grid gap-5 ${modules.selfEmployment?'lg:grid-cols-2':''}`}><section className="flex flex-col gap-3"><div><h3 className="font-semibold">Entrate personali</h3><p className="text-sm text-muted-foreground">Stipendio e altri introiti personali</p></div>{incomeList(personalIncomes,'Nessuna entrata personale')}</section>{modules.selfEmployment&&<section className="flex flex-col gap-3"><div><h3 className="font-semibold">Incassi lavoro autonomo</h3><p className="text-sm text-muted-foreground">Fatture pagate e compensi professionali</p></div>{incomeList(pivaIncomes,'Nessun incasso professionale')}</section>}</div>
+      {modules.benefits&&<section className="flex flex-col gap-3"><div><h3 className="font-semibold">Accrediti benefit</h3><p className="text-sm text-muted-foreground">Valore ricevuto su buoni pasto, welfare e carte carburante: visibile, ma separato dal reddito monetario.</p></div>{incomeList(benefitIncomes,'Nessun accredito benefit registrato')}</section>}
       <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Abbonamenti</h3><p className="text-sm text-muted-foreground">Costi ricorrenti con periodo definito o senza scadenza</p></div>{expenseList(subscriptions,'Nessun abbonamento')}</section>
       <section className="flex flex-col gap-3"><div><h3 className="font-semibold">Altre spese</h3><p className="text-sm text-muted-foreground">Spese personali e professionali</p></div>{expenseList(otherExpenses,'Nessuna spesa')}</section>
     </div>
@@ -585,7 +662,7 @@ function Movements({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetState
 }
 
 // ── CONTI ──
-function Accounts({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+function Accounts({s,set,selfEmploymentEnabled}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;selfEmploymentEnabled:boolean}) {
   const [tipo,setTipo]=useState<Account['type']>('conto')
   const [showForm,setShowForm]=useState(false)
   const [editing,setEditing]=useState<Account|null>(null)
@@ -628,7 +705,7 @@ function Accounts({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction
         <form key={editing?.id??'new-account'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">
           {editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica conto “{editing.name}”</p>}
           <Field label="Nome conto"><input name="name" required placeholder="Es. Intesa, Revolut..." defaultValue={editing?.name}/></Field>
-          <Field label="Tipo"><select value={tipo} onChange={e=>setTipo(e.target.value as Account['type'])}><option value="conto">🏦 Corrente</option><option value="piva">🧾 Professionale</option><option value="carta">💳 Carta di credito</option><option value="fido">📋 Fido</option><option value="contanti">💵 Contanti</option></select></Field>
+          <Field label="Tipo"><select value={tipo} onChange={e=>setTipo(e.target.value as Account['type'])}><option value="conto">🏦 Corrente</option>{(selfEmploymentEnabled||tipo==='piva')&&<option value="piva">🧾 Professionale</option>}<option value="carta">💳 Carta di credito</option><option value="fido">📋 Fido</option><option value="contanti">💵 Contanti</option></select></Field>
           <Field label="Saldo attuale (€)"><input name="balance" type="number" step=".01" defaultValue={editing?.balance??0}/></Field>
           {tipo==='carta'&&<><Field label="Plafond (€)"><input name="plafond" type="number" placeholder="Es. 3000" defaultValue={editing?.plafond}/></Field><Field label="Giorno estratto"><input name="estratto" type="number" min="1" max="31" placeholder="Es. 1" defaultValue={editing?.giornoEstratto}/></Field><Field label="Giorno addebito"><input name="addebito" type="number" min="1" max="31" placeholder="Es. 15" defaultValue={editing?.giornoAddebito}/></Field><Field label="Tasso revolving (%/anno)"><input name="revolving" type="number" step=".1" placeholder="0" defaultValue={editing?.tassoRevolving}/></Field><label className="flex items-center gap-2 text-sm"><input name="useRev" type="checkbox" defaultChecked={editing?.usaRevolving}/>Usa revolving</label></>}
           {tipo==='fido'&&<><Field label="Importo massimo (€)"><input name="fidoMax" type="number" placeholder="Es. 5000" defaultValue={editing?.fidoMax}/></Field><Field label="Soglia alert (€)"><input name="fidoAlert" type="number" placeholder="Es. 3000" defaultValue={editing?.fidoAlert}/></Field><Field label="Tasso annuo (%)"><input name="fidoTasso" type="number" step=".1" placeholder="Es. 8.5" defaultValue={editing?.fidoTasso}/></Field></>}
@@ -666,7 +743,7 @@ function Budgets({s,set,year}:{s:BudgetState;set:React.Dispatch<React.SetStateAc
 }
 
 // ── PATRIMONIO ──
-function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+function Assets({s,set,modules,onOpenSettings}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;modules:Record<AppModule,boolean>;onOpenSettings:()=>void}) {
   const today=new Date().toISOString().slice(0,10)
   const [showForm,setShowForm]=useState(false)
   const [editingAsset,setEditingAsset]=useState<Asset|null>(null)
@@ -676,9 +753,14 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
   const [freq,setFreq]=useState<Freq>('mensile')
   const [assetType,setAssetType]=useState<Asset['type']>('finanziario')
   const [autoTrackPayments,setAutoTrackPayments]=useState(false)
-  const pat=patrimoniTotals(s.assets)
+  const enabledAssetTypes:Asset['type'][]=[...(modules.investments?['finanziario' as const,'risparmio' as const]:[]),...(modules.insurance?['assicurativo' as const]:[])]
+  const defaultAssetType=enabledAssetTypes[0]??'finanziario'
+  const visibleAssets=s.assets.filter(asset=>asset.type==='assicurativo'?modules.insurance:modules.investments)
+  const hasAssetModules=modules.investments||modules.insurance
+  const hasAnyPatrimonyModule=hasAssetModules||modules.benefits
+  const pat=patrimoniTotals(visibleAssets)
   const rendPerc=pat.totVersato>0?(pat.rend/pat.totVersato*100):0
-  const resetAssetForm=()=>{setShowForm(false);setEditingAsset(null);setFreq('mensile');setAssetType('finanziario');setAutoTrackPayments(false)}
+  const resetAssetForm=()=>{setShowForm(false);setEditingAsset(null);setFreq('mensile');setAssetType(defaultAssetType);setAutoTrackPayments(false)}
   const submitAsset=(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault()
     const f=new FormData(e.currentTarget)
@@ -711,14 +793,16 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
   }
   return (
     <div className="flex flex-col gap-6">
-      <Heading kicker="PATRIMONIO" title="Investimenti, risparmi e polizze" text="Distingui i versamenti programmati dal denaro realmente versato e dal valore attuale."/>
+      <Heading kicker="PATRIMONIO" title="Il valore che costruisci nel tempo" text="Investimenti, risparmi, polizze e benefit restano distinti dalla liquidità quotidiana."/>
+      {!hasAnyPatrimonyModule&&<Card className="border-primary/25 bg-primary/5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">NESSUN MODULO ATTIVO</p><h3 className="mt-2 text-xl font-semibold">Scegli cosa vuoi gestire nel patrimonio.</h3><p className="mt-1 text-sm text-muted-foreground">Puoi attivare investimenti, assicurazioni oppure benefit aziendali. I moduli non scelti restano fuori dal menu e dai moduli di inserimento.</p></div><button onClick={onOpenSettings} className="h-10 shrink-0 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">Personalizza l’app</button></div></Card>}
+      {hasAssetModules&&<>
       <div className="grid gap-4 sm:grid-cols-3">
         <Metric label="Versato netto" value={pat.totVersato}/>
         <Metric label="Valore attuale" value={pat.totValore}/>
         <Card><p className="text-sm text-muted-foreground">Rendimento totale</p><p className={`mt-3 text-2xl font-semibold ${pat.rend>=0?'text-green-600':'text-destructive'}`}>{pat.rend>=0?'+':''}{money.format(pat.rend)}</p><p className="mt-1 text-xs text-muted-foreground">{rendPerc>=0?'+':''}{rendPerc.toFixed(1)}%</p></Card>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
-        {s.assets.map(a=>{
+        {visibleAssets.map(a=>{
           const movs=(a.movimenti??[]).slice().sort((x,y)=>y.data.localeCompare(x.data))
           const versato=movs.filter(m=>m.tipo==='versamento').reduce((n,m)=>n+m.importo,0)
           const prelevato=movs.filter(m=>m.tipo==='prelievo').reduce((n,m)=>n+m.importo,0)
@@ -746,10 +830,11 @@ function Assets({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<B
             </Card>
           )
         })}
-        <button onClick={()=>{if(showForm)resetAssetForm();else{setEditingAsset(null);setFreq('mensile');setAssetType('finanziario');setAutoTrackPayments(false);setShowForm(true)}}} className="rounded-2xl border-2 border-dashed border-border hover:border-primary flex items-center justify-center gap-2 text-muted-foreground hover:text-primary p-5 min-h-[120px] transition-colors"><Plus className="size-5"/>Nuova voce patrimoniale</button>
+        <button onClick={()=>{if(showForm)resetAssetForm();else{setEditingAsset(null);setFreq('mensile');setAssetType(defaultAssetType);setAutoTrackPayments(defaultAssetType==='assicurativo');setShowForm(true)}}} className="rounded-2xl border-2 border-dashed border-border hover:border-primary flex items-center justify-center gap-2 text-muted-foreground hover:text-primary p-5 min-h-[120px] transition-colors"><Plus className="size-5"/>Nuova voce patrimoniale</button>
       </div>
-      {showForm&&<form key={editingAsset?.id??'new-asset'} onSubmit={submitAsset} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editingAsset&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editingAsset.name}”</p>}<Field label="Nome"><input name="name" required placeholder="Es. Polizza vita, PAC, Satispay..." defaultValue={editingAsset?.name}/></Field><Field label="Categoria"><select value={assetType} onChange={event=>{const type=event.target.value as Asset['type'];setAssetType(type);setAutoTrackPayments(type==='assicurativo')}}><option value="finanziario">📈 Investimento finanziario</option><option value="assicurativo">🛡️ Assicurativo / Previdenziale</option><option value="risparmio">🏦 Risparmio vincolato</option></select></Field><Field label="Istituto"><input name="istituto" placeholder="Es. Fineco, Generali..." defaultValue={editingAsset?.istituto}/></Field><Field label={assetType==='assicurativo'?'Importo rata / premio (€)':'Versamento ricorrente (€)'}><input name="importoVers" type="number" min="0" step=".01" placeholder="0,00" defaultValue={editingAsset?.importoVers}/></Field><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><Field label={assetType==='assicurativo'?'Data della prima rata':'Data primo versamento'}><input name="startDate" type="date" required={autoTrackPayments} defaultValue={editingAsset?.startDate}/></Field>{assetType==='assicurativo'&&<Field label="Durata (anni)"><input name="durationYears" type="number" min="1" step="1" placeholder="Es. 18" defaultValue={editingAsset?.durationYears}/></Field>}<Field label="Conto di origine (facoltativo)"><select name="sourceAccountId" defaultValue={editingAsset?.sourceAccountId??''}><option value="">Nessun conto collegato</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field><Field label="Valore attuale rilevato (€)"><input name="currentValue" type="number" min="0" step=".01" placeholder="0,00" defaultValue={editingAsset?.value??0}/></Field>{assetType==='assicurativo'&&<label className="col-span-full flex items-start gap-3 rounded-xl border bg-secondary/40 p-3 text-sm"><input type="checkbox" className="mt-1" checked={autoTrackPayments} onChange={event=>setAutoTrackPayments(event.target.checked)}/><span><b>Calcola automaticamente quanto ho già pagato</b><span className="mt-1 block text-xs text-muted-foreground">Conta tutte le rate dalla prima data fino a oggi. Non crea doppioni nei Movimenti e puoi sempre disattivarlo.</span></span></label>}<p className="col-span-full text-xs text-muted-foreground">Il versamento ricorrente riduce la disponibilità mensile come trasferimento verso il patrimonio, non come spesa di consumo.</p><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editingAsset?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={resetAssetForm} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
-      <Benefits s={s} set={set}/>
+      {showForm&&<form key={editingAsset?.id??'new-asset'} onSubmit={submitAsset} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editingAsset&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editingAsset.name}”</p>}<Field label="Nome"><input name="name" required placeholder="Es. Polizza vita, PAC, Satispay..." defaultValue={editingAsset?.name}/></Field><Field label="Categoria"><select value={assetType} onChange={event=>{const type=event.target.value as Asset['type'];setAssetType(type);setAutoTrackPayments(type==='assicurativo')}}>{modules.investments&&<><option value="finanziario">📈 Investimento finanziario</option><option value="risparmio">🏦 Risparmio vincolato</option></>}{modules.insurance&&<option value="assicurativo">🛡️ Assicurativo / Previdenziale</option>}</select></Field><Field label="Istituto"><input name="istituto" placeholder="Es. Fineco, Generali..." defaultValue={editingAsset?.istituto}/></Field><Field label={assetType==='assicurativo'?'Importo rata / premio (€)':'Versamento ricorrente (€)'}><input name="importoVers" type="number" min="0" step=".01" placeholder="0,00" defaultValue={editingAsset?.importoVers}/></Field><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><Field label={assetType==='assicurativo'?'Data della prima rata':'Data primo versamento'}><input name="startDate" type="date" required={autoTrackPayments} defaultValue={editingAsset?.startDate}/></Field>{assetType==='assicurativo'&&<Field label="Durata (anni)"><input name="durationYears" type="number" min="1" step="1" placeholder="Es. 18" defaultValue={editingAsset?.durationYears}/></Field>}<Field label="Conto di origine (facoltativo)"><select name="sourceAccountId" defaultValue={editingAsset?.sourceAccountId??''}><option value="">Nessun conto collegato</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field><Field label="Valore attuale rilevato (€)"><input name="currentValue" type="number" min="0" step=".01" placeholder="0,00" defaultValue={editingAsset?.value??0}/></Field>{assetType==='assicurativo'&&<label className="col-span-full flex items-start gap-3 rounded-xl border bg-secondary/40 p-3 text-sm"><input type="checkbox" className="mt-1" checked={autoTrackPayments} onChange={event=>setAutoTrackPayments(event.target.checked)}/><span><b>Calcola automaticamente quanto ho già pagato</b><span className="mt-1 block text-xs text-muted-foreground">Conta tutte le rate dalla prima data fino a oggi. Non crea doppioni nei Movimenti e puoi sempre disattivarlo.</span></span></label>}<p className="col-span-full text-xs text-muted-foreground">Il versamento ricorrente riduce la disponibilità mensile come trasferimento verso il patrimonio, non come spesa di consumo.</p><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editingAsset?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={resetAssetForm} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
+      </>}
+      {modules.benefits&&<Benefits s={s} set={set}/>}
     </div>
   )
 }
@@ -850,7 +935,7 @@ function Benefits({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction
 }
 
 // ── FINANZIAMENTI ──
-function Financings({s,set,onOpenDeadlines}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;onOpenDeadlines:()=>void}) {
+function Financings({s,set,selfEmploymentEnabled,onOpenDeadlines}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;selfEmploymentEnabled:boolean;onOpenDeadlines:()=>void}) {
   const [showForm,setShowForm]=useState(false)
   const [editing,setEditing]=useState<Financing|null>(null)
   const [category,setCategory]=useState<FinancingCategory>('auto')
@@ -921,7 +1006,7 @@ function Financings({s,set,onOpenDeadlines}:{s:BudgetState;set:React.Dispatch<Re
       <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">1. Informazioni principali</h4><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Field label="Nome"><input name="name" required placeholder="Es. Auto, mutuo casa..." defaultValue={editing?.name}/></Field>
         <Field label="Categoria"><select value={category} onChange={e=>setCategory(e.target.value as FinancingCategory)}>{(Object.keys(FINANCING_LABEL) as FinancingCategory[]).map(key=><option key={key} value={key}>{FINANCING_LABEL[key]}</option>)}</select></Field>
-        <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option><option value="piva">Lavoro autonomo</option></select></Field>
+        <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option>{(selfEmploymentEnabled||editing?.kind==='piva')&&<option value="piva">Lavoro autonomo</option>}</select></Field>
         <Field label="Conto di addebito"><select name="accountId" defaultValue={editing?.accountId??''}><option value="">Nessun conto</option>{s.accounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
       </div></section>
       <section className="rounded-xl border p-4"><h4 className="mb-4 font-semibold">2. Durata e importi</h4><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1056,7 +1141,7 @@ function SelfEmployment({s,set,year,userId}:{s:BudgetState;set:React.Dispatch<Re
 }
 
 // ── SCADENZE ──
-function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+function Deadlines({s,set,financingsEnabled}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;financingsEnabled:boolean}) {
   const today=new Date().toISOString().slice(0,10)
   const [selectedMonth,setSelectedMonth]=useState(today.slice(0,7))
   const [showForm,setShowForm]=useState(false)
@@ -1066,10 +1151,10 @@ function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActio
   const monthLabel=new Intl.DateTimeFormat('it-IT',{month:'long',year:'numeric'}).format(monthDate)
   const shiftMonth=(amount:number)=>{const next=new Date(monthDate);next.setMonth(next.getMonth()+amount);setSelectedMonth(`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}`)}
   const manualDeadlines=s.deadlines.filter(item=>item.date.startsWith(selectedMonth)).sort((a,b)=>a.date.localeCompare(b.date))
-  const financingDeadlines=s.financings.flatMap(financing=>financingInstallmentSchedule(financing).filter(installment=>installment.date.startsWith(selectedMonth)).map(installment=>({financing,installment}))).sort((a,b)=>a.installment.date.localeCompare(b.installment.date))
+  const financingDeadlines=(financingsEnabled?s.financings:[]).flatMap(financing=>financingInstallmentSchedule(financing).filter(installment=>installment.date.startsWith(selectedMonth)).map(installment=>({financing,installment}))).sort((a,b)=>a.installment.date.localeCompare(b.installment.date))
   const monthItems=[...manualDeadlines.map(deadline=>({type:'manual' as const,date:deadline.date,deadline})),...financingDeadlines.map(item=>({type:'financing' as const,date:item.installment.date,...item}))].sort((a,b)=>a.date.localeCompare(b.date))
   const monthTotal=manualDeadlines.filter(item=>!item.paid).reduce((total,item)=>total+item.amount,0)+financingDeadlines.reduce((total,item)=>total+item.installment.amount,0)
-  const futureInstallments=s.financings.reduce((total,financing)=>total+financingInstallmentSchedule(financing).length,0)
+  const futureInstallments=(financingsEnabled?s.financings:[]).reduce((total,financing)=>total+financingInstallmentSchedule(financing).length,0)
   const payInstallment=(financing:Financing,installment:{date:string;amount:number})=>{
     if(!window.confirm(`Registrare come pagata la rata di ${money.format(installment.amount)} di “${financing.name}”?`))return
     const paidDate=new Date().toISOString().slice(0,10),expenseId=uid(),principalAmount=financingPrincipalReduction(financing,installment.amount)
@@ -1087,11 +1172,11 @@ function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActio
   }
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-end justify-between gap-4"><Heading kicker="CALENDARIO" title="Scadenze mensili" text="Scadenze manuali e rate dei finanziamenti, riunite automaticamente mese per mese."/><button onClick={()=>{setEditing(null);setFreq('unica');setShowForm(v=>!v)}} className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi scadenza</button></div>
+      <div className="flex flex-wrap items-end justify-between gap-4"><Heading kicker="CALENDARIO" title="Scadenze mensili" text={financingsEnabled?'Scadenze manuali e rate dei finanziamenti, riunite automaticamente mese per mese.':'Pagamenti e promemoria manuali, organizzati mese per mese.'}/><button onClick={()=>{setEditing(null);setFreq('unica');setShowForm(v=>!v)}} className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="size-4"/>Aggiungi scadenza</button></div>
       <Card><div className="flex flex-wrap items-center justify-between gap-4"><button onClick={()=>shiftMonth(-1)} className="grid size-10 place-items-center rounded-xl border hover:bg-secondary" aria-label="Mese precedente"><ChevronLeft className="size-4"/></button><div className="text-center"><p className="text-xs font-semibold uppercase tracking-widest text-primary">Mese visualizzato</p><h3 className="mt-1 text-xl font-semibold capitalize">{monthLabel}</h3>{selectedMonth!==today.slice(0,7)&&<button onClick={()=>setSelectedMonth(today.slice(0,7))} className="mt-1 text-xs font-medium text-primary">Torna al mese corrente</button>}</div><button onClick={()=>shiftMonth(1)} className="grid size-10 place-items-center rounded-xl border hover:bg-secondary" aria-label="Mese successivo"><ChevronRight className="size-4"/></button></div></Card>
-      <div className="grid gap-4 sm:grid-cols-3"><Metric label={`Totale programmato · ${monthLabel}`} value={monthTotal}/><Card><p className="text-sm text-muted-foreground">Rate automatiche nel mese</p><p className="mt-3 text-2xl font-semibold">{financingDeadlines.length}</p><p className="mt-1 text-xs text-muted-foreground">Generate dai finanziamenti</p></Card><Card><p className="text-sm text-muted-foreground">Rate future complessive</p><p className="mt-3 text-2xl font-semibold">{futureInstallments}</p><p className="mt-1 text-xs text-muted-foreground">Distribuite nei prossimi mesi</p></Card></div>
+      <div className={`grid gap-4 ${financingsEnabled?'sm:grid-cols-3':''}`}><Metric label={`Totale programmato · ${monthLabel}`} value={monthTotal}/>{financingsEnabled&&<><Card><p className="text-sm text-muted-foreground">Rate automatiche nel mese</p><p className="mt-3 text-2xl font-semibold">{financingDeadlines.length}</p><p className="mt-1 text-xs text-muted-foreground">Generate dai finanziamenti</p></Card><Card><p className="text-sm text-muted-foreground">Rate future complessive</p><p className="mt-3 text-2xl font-semibold">{futureInstallments}</p><p className="mt-1 text-xs text-muted-foreground">Distribuite nei prossimi mesi</p></Card></>}</div>
       {showForm&&<form key={editing?.id??'new-deadline'} onSubmit={submit} className="grid gap-4 rounded-2xl border bg-card p-5 md:grid-cols-3">{editing&&<p className="col-span-full rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">Modifica “{editing.title}”</p>}<Field label="Descrizione"><input name="title" required placeholder="Es. Assicurazione auto" defaultValue={editing?.title}/></Field><Field label="Data"><input name="date" type="date" required defaultValue={editing?.date}/></Field><Field label="Importo (€)"><input name="amount" type="number" step=".01" required defaultValue={editing?.amount}/></Field><Field label="Priorità"><select name="priority" defaultValue={editing?.priority??'alta'}><option value="alta">Alta</option><option value="media">Media</option><option value="bassa">Bassa</option></select></Field><Field label="Frequenza"><FreqSelect value={freq} onChange={setFreq}/></Field><div className="col-span-full flex gap-3"><button type="submit" className="h-10 rounded-xl bg-primary px-5 font-semibold text-primary-foreground">{editing?'Salva modifiche':'Aggiungi'}</button><button type="button" onClick={()=>{setShowForm(false);setEditing(null)}} className="h-10 rounded-xl border px-5 text-sm">Annulla</button></div></form>}
-      <section><div className="mb-3"><h3 className="font-semibold capitalize">Pagamenti di {monthLabel}</h3><p className="text-sm text-muted-foreground">Vedi solo il mese selezionato. Le rate con etichetta “Automatica” arrivano direttamente dai finanziamenti.</p></div><div className="flex flex-col gap-3">{monthItems.map(item=>{
+      <section><div className="mb-3"><h3 className="font-semibold capitalize">Pagamenti di {monthLabel}</h3><p className="text-sm text-muted-foreground">{financingsEnabled?'Vedi solo il mese selezionato. Le rate con etichetta “Automatica” arrivano direttamente dai finanziamenti.':'Vedi solo il mese selezionato e aggiungi qui i tuoi promemoria di pagamento.'}</p></div><div className="flex flex-col gap-3">{monthItems.map(item=>{
         const day=Number(item.date.slice(8,10))
         const weekday=new Intl.DateTimeFormat('it-IT',{weekday:'short'}).format(new Date(`${item.date}T12:00:00`))
         if(item.type==='manual'){
@@ -1108,7 +1193,7 @@ function Deadlines({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActio
 }
 
 // ── PREVISIONI ──
-function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>}) {
+function Previsioni({s,set,selfEmploymentEnabled}:{s:BudgetState;set:React.Dispatch<React.SetStateAction<BudgetState>>;selfEmploymentEnabled:boolean}) {
   const today=new Date().toISOString().slice(0,10)
   const [data,setData]=useState(today)
   const [simType,setSimType]=useState<SimulationType>('mutuo')
@@ -1191,7 +1276,7 @@ function Previsioni({s,set}:{s:BudgetState;set:React.Dispatch<React.SetStateActi
       {editing&&<div className="col-span-full flex items-center justify-between rounded-xl bg-primary/10 px-3 py-2 text-sm font-semibold text-primary"><span>Modifica scenario “{editing.name}”</span><button type="button" onClick={resetSimulationForm} className="text-xs">Annulla modifica</button></div>}
       <Field label="Nome scenario"><input name="name" required placeholder="Es. Mutuo casa 25 anni" defaultValue={editing?.name}/></Field>
       <Field label="Cosa vuoi simulare"><select value={simType} onChange={e=>setSimType(e.target.value as SimulationType)}>{(Object.keys(SIMULATION_LABEL) as SimulationType[]).map(type=><option key={type} value={type}>{SIMULATION_LABEL[type]}</option>)}</select></Field>
-      <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option><option value="piva">Lavoro autonomo</option></select></Field>
+      <Field label="Ambito"><select name="kind" defaultValue={editing?.kind??'personale'}><option value="personale">Personale</option>{(selfEmploymentEnabled||editing?.kind==='piva')&&<option value="piva">Lavoro autonomo</option>}</select></Field>
       <Field label={isLoan?'Costo del bene/progetto (€)':'Importo (€)'}><input type="number" min=".01" step=".01" required value={simAmount||''} onChange={e=>setSimAmount(Number(e.target.value))}/></Field>
       {isLoan?<>
         <Field label="Anticipo (€)"><input type="number" min="0" step=".01" value={simDownPayment||''} onChange={e=>setSimDownPayment(Number(e.target.value))}/></Field>
@@ -1236,18 +1321,38 @@ function Setup({s,set,onSave,saveMsg,saving,logout,user}:{s:BudgetState;set:Reac
   const [editingCategoryId,setEditingCategoryId]=useState<string|null>(null)
   const [categoryDraft,setCategoryDraft]=useState('')
   const saveCategoryName=(id:string)=>{const next=categoryDraft.trim();if(!next)return;set(value=>{const current=value.categories.find(item=>item.id===id);if(!current)return value;return{...value,categories:value.categories.map(item=>item.id===id?{...item,name:next}:item),expenses:value.expenses.map(item=>item.category===current.name?{...item,category:next}:item)}});setEditingCategoryId(null);setCategoryDraft('')}
+  const moduleDataCount=(id:AppModule)=>({
+    financings:s.financings.length,
+    investments:s.assets.filter(item=>item.type!=='assicurativo').length,
+    insurance:s.assets.filter(item=>item.type==='assicurativo').length,
+    simulations:s.simulations.length,
+    goals:s.goals.length,
+    selfEmployment:s.invoices.length+s.incomes.filter(item=>item.kind==='piva').length+s.expenses.filter(item=>item.kind==='piva').length,
+    benefits:s.benefits.length,
+    advisor:0
+  })[id]
+  const toggleModule=(id:AppModule)=>{
+    const active=s.preferences.modules[id],count=moduleDataCount(id)
+    if(active&&count>0&&!window.confirm(`Nascondere questo modulo? ${count} elementi resteranno salvati e ricompariranno quando lo riattivi.`))return
+    set(value=>({...value,preferences:{...value.preferences,modules:{...value.preferences.modules,[id]:!active}}}))
+  }
   return (
     <div className="flex max-w-3xl flex-col gap-6">
-      <Heading kicker="CONFIGURAZIONE" title="Impostazioni" text="Profilo fiscale, limiti e categorie."/>
-      <AccountAccess user={user}/>
+      <Heading kicker="CONFIGURAZIONE" title="Impostazioni" text="Decidi quali strumenti usare e come deve apparire il tuo Bilancio."/>
       <Card>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">PERSONALIZZA L’APP</p><h3 className="mt-2 text-xl font-semibold">Attiva soltanto ciò che ti serve</h3><p className="mt-1 text-sm text-muted-foreground">Nascondere un modulo non elimina mai i dati già inseriti e non modifica lo storico.</p></div><button onClick={()=>set(value=>({...value,preferences:{...value.preferences,onboardingCompleted:false}}))} className="h-10 shrink-0 rounded-xl border px-3 text-xs font-semibold hover:bg-secondary">Ripeti configurazione guidata</button></div>
+        <div className="mt-5 rounded-2xl bg-secondary/60 p-4"><p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">SEMPRE ATTIVI</p><div className="mt-3 flex flex-wrap gap-2">{CORE_FEATURES.map(item=><span key={item} className="rounded-full border bg-card px-3 py-1.5 text-xs font-semibold"><CheckCircle2 className="mr-1.5 inline size-3.5 text-primary"/>{item}</span>)}</div></div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">{MODULE_CATALOG.map(({id,label,description,icon:Icon})=>{const active=s.preferences.modules[id],count=moduleDataCount(id);return <div key={id} className={`rounded-2xl border p-4 transition-colors ${active?'border-primary/40 bg-primary/5':'bg-background'}`}><div className="flex items-start gap-3"><div className={`grid size-10 shrink-0 place-items-center rounded-xl ${active?'bg-primary text-primary-foreground':'bg-secondary text-primary'}`}><Icon className="size-4"/></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{label}</p><p className="mt-1 text-xs leading-snug text-muted-foreground">{description}</p></div><button type="button" role="switch" aria-checked={active} aria-label={`${active?'Disattiva':'Attiva'} ${label}`} onClick={()=>toggleModule(id)} className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors ${active?'bg-primary':'bg-border'}`}><span className={`absolute top-1 size-4 rounded-full bg-white shadow-sm transition-all ${active?'left-6':'left-1'}`}/></button></div>{count>0&&<p className="mt-2 text-[11px] font-semibold text-primary">{count} {count===1?'elemento salvato':'elementi salvati'}</p>}</div></div></div>})}</div>
+      </Card>
+      <AccountAccess user={user}/>
+      {s.preferences.modules.selfEmployment&&<Card>
         <h3 className="font-semibold mb-4">Profilo fiscale del lavoro autonomo</h3>
         <div className="grid gap-4 md:grid-cols-2">
           {([['name','Nome',true],['ateco','Codice ATECO',true],['profitability','Redditività %',false],['substituteTax','Imposta %',false],['contributions','Contributi %',false],['taxReserve','Accantonamento %',false]] as const).map(([k,l,isText])=>(
             <Field key={k} label={l}><input type={isText?'text':'number'} value={s.profile[k]} onChange={e=>update(k,e.target.value)}/></Field>
           ))}
         </div>
-      </Card>
+      </Card>}
       <Card>
         <h3 className="font-semibold mb-4">Limite di spesa mensile</h3>
         <p className="text-sm text-muted-foreground mb-4">Vince il più restrittivo tra i due. 0 = disabilitato.</p>
@@ -1259,7 +1364,7 @@ function Setup({s,set,onSave,saveMsg,saving,logout,user}:{s:BudgetState;set:Reac
       <Card>
         <h3 className="font-semibold">Personalizza la dashboard</h3>
         <p className="mb-4 mt-1 text-sm text-muted-foreground">Scegli quali blocchi mostrare nella panoramica.</p>
-        <div className="grid gap-2 sm:grid-cols-2">{([['forecast','Previsioni 30/60/90 giorni'],['alerts','Avvisi e prossime scadenze'],['goals','Obiettivi di risparmio'],['subscriptions','Abbonamenti senza scadenza'],['charts','Grafici e indicatori']] as const).map(([key,label])=><label key={key} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-sm"><span>{label}</span><input type="checkbox" checked={s.dashboard[key]} onChange={event=>set(value=>({...value,dashboard:{...value.dashboard,[key]:event.target.checked}}))}/></label>)}</div>
+        <div className="grid gap-2 sm:grid-cols-2">{([['forecast','Previsioni 30/60/90 giorni'],['alerts','Avvisi e prossime scadenze'],['goals','Obiettivi di risparmio'],['subscriptions','Abbonamenti senza scadenza'],['charts','Grafici e indicatori']] as const).filter(([key])=>key!=='goals'||s.preferences.modules.goals).map(([key,label])=><label key={key} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-sm"><span>{label}</span><input type="checkbox" checked={s.dashboard[key]} onChange={event=>set(value=>({...value,dashboard:{...value.dashboard,[key]:event.target.checked}}))}/></label>)}</div>
       </Card>
       <Card>
         <h3 className="font-semibold mb-4">Categorie di spesa</h3>

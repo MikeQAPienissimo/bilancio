@@ -160,6 +160,11 @@ export type DashboardPreferences = {
   subscriptions: boolean
   charts: boolean
 }
+export type AppModule = 'financings' | 'investments' | 'insurance' | 'simulations' | 'goals' | 'selfEmployment' | 'benefits' | 'advisor'
+export type AppPreferences = {
+  onboardingCompleted: boolean
+  modules: Record<AppModule, boolean>
+}
 export type TaxProfile = {
   name: string; ateco: string; profitability: number
   substituteTax: number; contributions: number; taxReserve: number
@@ -179,7 +184,30 @@ export type BudgetState = {
   invoices: Invoice[]
   benefits: BenefitWallet[]
   dashboard: DashboardPreferences
+  preferences: AppPreferences
   limiteSpesa: LimiteSpesa
+}
+
+export const EMPTY_MODULES: Record<AppModule, boolean> = {
+  financings: false,
+  investments: false,
+  insurance: false,
+  simulations: false,
+  goals: false,
+  selfEmployment: false,
+  benefits: false,
+  advisor: false
+}
+
+export const ALL_MODULES: Record<AppModule, boolean> = {
+  financings: true,
+  investments: true,
+  insurance: true,
+  simulations: true,
+  goals: true,
+  selfEmployment: true,
+  benefits: true,
+  advisor: true
 }
 
 export const FREQ_LABEL: Record<Freq, string> = {
@@ -373,7 +401,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 11,
+    version: 12,
     profile: {
       name: '',
       ateco: '',
@@ -393,6 +421,7 @@ export function createEmptyState(): BudgetState {
     invoices: [],
     benefits: [],
     dashboard: { forecast: true, alerts: true, goals: true, subscriptions: true, charts: true },
+    preferences: { onboardingCompleted: false, modules: { ...EMPTY_MODULES } },
     incomes: [],
     expenses: []
   }
@@ -405,8 +434,14 @@ export const uid = () => crypto.randomUUID()
 
 export function migrate(v: Partial<BudgetState>): BudgetState {
   const empty = createEmptyState()
+  const preferences = v.preferences
+    ? {
+        onboardingCompleted: v.preferences.onboardingCompleted ?? true,
+        modules: { ...empty.preferences.modules, ...v.preferences.modules }
+      }
+    : { onboardingCompleted: true, modules: { ...ALL_MODULES } }
   return {
-    ...empty, ...v, version: 11,
+    ...empty, ...v, version: 12,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -447,6 +482,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
     invoices: v.invoices ?? [],
     benefits: (v.benefits ?? []).map(benefit => ({ ...benefit, accreditMode: benefit.accreditMode ?? 'none', transactions: benefit.transactions ?? [] })),
     dashboard: { ...empty.dashboard, ...v.dashboard },
+    preferences,
     simulations: (v.simulations ?? []).map(simulation => {
       const installmentCount = simulation.installmentCount ?? Math.max(0, simulation.durationMonths ?? 0)
       const principal = Math.max(0, simulation.amount - simulation.downPayment)
