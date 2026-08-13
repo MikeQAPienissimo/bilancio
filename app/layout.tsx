@@ -7,7 +7,7 @@ const geist = Geist({ subsets: ['latin'], variable: '--font-geist' })
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
-  title: 'Bilancio — Budget personale e P.IVA',
+  title: 'Bilancio — Budget personale e lavoro autonomo',
   description: 'Gestisci entrate, spese e previsioni fiscali in un unico spazio.',
   generator: 'v0.app',
 }
