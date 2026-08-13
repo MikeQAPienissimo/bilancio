@@ -15,6 +15,8 @@ export type Income = {
 export type Expense = Income & {
   category: string
   freq: Freq
+  expenseClass?: 'consumption' | 'investment_transfer' | 'insurance_premium'
+  assetId?: string
   benefitAmount?: number
   cashWithdrawalId?: string
   publicBenefitSourcePaymentId?: string
@@ -39,15 +41,22 @@ export type Account = {
   fidoMax?: number; fidoAlert?: number; fidoTasso?: number
 }
 export type Category = { id: string; name: string; budget: number }
+export type InsuranceKind = 'protection' | 'savings' | 'unit_linked'
 export type Asset = {
   id: string; name: string
   type: 'finanziario' | 'assicurativo' | 'risparmio'
   paid: number; value: number; istituto?: string
   freq?: Freq; importoVers?: number
   startDate?: string
+  initialPayment?: number
+  initialPaymentDate?: string
   durationYears?: number
   autoTrackPayments?: boolean
   sourceAccountId?: string
+  insuranceKind?: InsuranceKind
+  deathBenefit?: number
+  disabilityBenefit?: number
+  beneficiary?: string
   movimenti?: AssetMovimento[]
 }
 export type AssetMovimento = {
@@ -439,15 +448,116 @@ export function assetPlanStatus(asset: Asset, asOfDate = isoDate(new Date())) {
   const totalInstallments=asset.durationYears&&asset.freq
     ? Math.max(1,Math.round(asset.durationYears*installmentsPerYear(asset.freq)))
     : 0
-  const progress=asset.startDate&&asset.freq&&totalInstallments>0
-    ? installmentProgress(asset.startDate,asset.freq,totalInstallments,asOfDate)
-    : {paid:0,remaining:totalInstallments,nextDate:'',endDate:''}
+  let progress={paid:0,remaining:totalInstallments,nextDate:'',endDate:''}
+  if(asset.startDate&&asset.freq&&totalInstallments>0)progress=installmentProgress(asset.startDate,asset.freq,totalInstallments,asOfDate)
+  else if(asset.startDate&&asset.freq&&asset.freq!=='unica'){
+    const start=new Date(`${asset.startDate}T12:00:00`)
+    if(!Number.isNaN(start.getTime())){
+      let paid=0,nextDate=''
+      for(let index=0;index<2400;index+=1){
+        const date=isoDate(addInstallmentInterval(start,asset.freq,index))
+        if(date<asOfDate)paid+=1
+        else{nextDate=date;break}
+      }
+      progress={paid,remaining:0,nextDate,endDate:''}
+    }
+  }
   return {
     ...progress,
     totalInstallments,
     estimatedPaid:roundCurrency(progress.paid*(asset.importoVers??0)),
     estimatedRemaining:roundCurrency(progress.remaining*(asset.importoVers??0))
   }
+}
+
+export function isProtectionInsurance(asset: Asset) {
+  return asset.type === 'assicurativo' && (asset.insuranceKind ?? 'protection') === 'protection'
+}
+
+export function assetFinancialStatus(asset: Asset, asOfDate = isoDate(new Date())) {
+  const movs = asset.movimenti ?? []
+  const registeredPaid = roundCurrency(movs.filter(movement => movement.tipo === 'versamento' && movement.data <= asOfDate).reduce((total, movement) => total + movement.importo, 0))
+  const withdrawals = roundCurrency(movs.filter(movement => movement.tipo === 'prelievo' && movement.data <= asOfDate).reduce((total, movement) => total + movement.importo, 0))
+  const initialPaid = asset.initialPayment && (!asset.initialPaymentDate || asset.initialPaymentDate <= asOfDate) ? roundCurrency(asset.initialPayment) : 0
+  const automaticPaid = asset.autoTrackPayments ? assetPlanStatus(asset, asOfDate).estimatedPaid : 0
+  const calculatedPaid = roundCurrency(initialPaid + registeredPaid + automaticPaid)
+  const grossPaid = roundCurrency(Math.max(0, asset.paid ?? 0, calculatedPaid))
+  const netPaid = roundCurrency(Math.max(0, grossPaid - withdrawals))
+  const latestValue = [...movs].filter(movement => movement.tipo === 'aggiornamento_valore' && movement.data <= asOfDate).sort((left, right) => right.data.localeCompare(left.data))[0]
+  const value = roundCurrency(Math.max(0, latestValue?.importo ?? asset.value ?? 0))
+  const returnAmount = roundCurrency(value - netPaid)
+  return {
+    registeredPaid,
+    initialPaid,
+    withdrawals,
+    automaticPaid,
+    calculatedPaid,
+    grossPaid,
+    netPaid,
+    value,
+    returnAmount,
+    returnPercent: netPaid > 0 ? returnAmount / netPaid * 100 : 0
+  }
+}
+
+export function assetPlanExpense(asset: Asset): Expense | null {
+  if (!asset.autoTrackPayments || !asset.startDate || !asset.freq || asset.freq === 'unica' || !asset.importoVers || asset.importoVers <= 0) return null
+  const protection = isProtectionInsurance(asset)
+  return {
+    id: `asset-plan-${asset.id}`,
+    assetId: asset.id,
+    date: asset.startDate,
+    description: protection ? `Premio ${asset.name}` : `Versamento ${asset.name}`,
+    amount: roundCurrency(asset.importoVers),
+    kind: 'personale',
+    accountId: asset.sourceAccountId,
+    recurring: true,
+    freq: asset.freq,
+    category: protection ? 'Assicurazioni' : 'Investimenti',
+    expenseClass: protection ? 'insurance_premium' : 'investment_transfer',
+    subscription: { startDate: asset.startDate, endDate: assetPlanStatus(asset).endDate || null }
+  }
+}
+
+export function assetInitialExpense(asset: Asset): Expense | null {
+  if (!asset.initialPayment || asset.initialPayment <= 0 || !asset.initialPaymentDate) return null
+  const protection = isProtectionInsurance(asset)
+  return {
+    id: `asset-initial-${asset.id}`,
+    assetId: asset.id,
+    date: asset.initialPaymentDate,
+    description: protection ? `Premio iniziale ${asset.name}` : `Versamento iniziale ${asset.name}`,
+    amount: roundCurrency(asset.initialPayment),
+    kind: 'personale',
+    accountId: asset.sourceAccountId,
+    recurring: false,
+    freq: 'unica',
+    category: protection ? 'Assicurazioni' : 'Investimenti',
+    expenseClass: protection ? 'insurance_premium' : 'investment_transfer'
+  }
+}
+
+export function assetMovementExpense(asset: Asset, movement: AssetMovimento): Expense | null {
+  if (movement.tipo !== 'versamento' || movement.importo <= 0) return null
+  const protection = isProtectionInsurance(asset)
+  return {
+    id: `asset-movement-${movement.id}`,
+    assetId: asset.id,
+    date: movement.data,
+    description: movement.note || (protection ? `Premio extra ${asset.name}` : `Versamento extra ${asset.name}`),
+    amount: roundCurrency(movement.importo),
+    kind: 'personale',
+    accountId: asset.sourceAccountId,
+    recurring: false,
+    freq: 'unica',
+    category: protection ? 'Assicurazioni' : 'Investimenti',
+    expenseClass: protection ? 'insurance_premium' : 'investment_transfer'
+  }
+}
+
+export function assetLinkedExpenses(asset: Asset) {
+  return [assetPlanExpense(asset), assetInitialExpense(asset), ...(asset.movimenti ?? []).map(movement => assetMovementExpense(asset, movement))]
+    .filter((expense): expense is Expense => Boolean(expense))
 }
 
 export function isActiveAt(startDate: string | undefined, endDate: string | null | undefined, atDate: string) {
@@ -458,7 +568,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 15,
+    version: 16,
     profile: {
       name: '',
       ateco: '',
@@ -499,13 +609,32 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         modules: { ...empty.preferences.modules, ...v.preferences.modules }
       }
     : { onboardingCompleted: true, modules: { ...ALL_MODULES } }
+  const assets: Asset[] = (v.assets ?? []).map(asset => {
+    const legacyPolizzaVita = (v.version ?? 0) < 16 && asset.type === 'assicurativo' && asset.name.trim().toLocaleLowerCase('it').replace(/\s+/g, '') === 'polizzavita'
+    return {
+      ...asset,
+      insuranceKind: asset.type === 'assicurativo' ? asset.insuranceKind ?? 'protection' : undefined,
+      autoTrackPayments: Boolean(asset.autoTrackPayments || ((v.version ?? 0) < 16 && asset.startDate && asset.importoVers && asset.freq && asset.freq !== 'unica')),
+      deathBenefit: asset.deathBenefit ?? (legacyPolizzaVita ? 150000 : undefined),
+      disabilityBenefit: asset.disabilityBenefit ?? (legacyPolizzaVita ? 150000 : undefined),
+      movimenti: asset.movimenti ?? []
+    }
+  })
+  const migratedExpenses: Expense[] = (v.expenses ?? []).map(expense => ({
+    ...expense,
+    freq: expense.freq ?? 'mensile',
+    expenseClass: expense.expenseClass ?? 'consumption',
+    subscription: expense.subscription ?? (expense.recurring ? { startDate: expense.date, endDate: null } : undefined)
+  }))
+  const linkedAssetExpenses = assets.flatMap(assetLinkedExpenses)
+  const expenses = [...migratedExpenses.filter(expense => !expense.assetId), ...linkedAssetExpenses]
   return {
-    ...empty, ...v, version: 15,
+    ...empty, ...v, version: 16,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
     categories: v.categories ?? [],
-    assets: v.assets ?? [],
+    assets,
     deadlines: v.deadlines ?? [],
     financings: (v.financings ?? []).map(financing => {
       const installmentCount = financing.installmentCount ?? 0
@@ -567,11 +696,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         paymentAmount: simulation.paymentAmount ?? installmentAmount(principal, interestMode, simulation.interestRate ?? 0, totalRepayable, installmentCount, simulation.freq)
       }
     }),
-    expenses: (v.expenses ?? []).map(e => ({
-      ...e,
-      freq: e.freq ?? 'mensile' as Freq,
-      subscription: e.subscription ?? (e.recurring ? { startDate: e.date, endDate: null } : undefined)
-    })),
+    expenses,
     incomes: (v.incomes ?? []).map(i => ({ ...i, freq: i.freq ?? 'mensile' as Freq }))
   }
 }
@@ -580,7 +705,7 @@ export function totals(s: BudgetState, y: number) {
   const today = isoDate(new Date())
   const incomes = s.incomes.filter(i => new Date(i.date).getFullYear() === y)
   const cashIncomes = incomes.filter(i => i.incomeClass !== 'benefit')
-  const expenses = s.expenses.filter(i => new Date(i.date).getFullYear() === y)
+  const expenses = s.expenses.filter(i => new Date(i.date).getFullYear() === y && i.expenseClass !== 'investment_transfer')
   const sum = (a: { amount: number }[]) => a.reduce((n, x) => n + x.amount, 0)
   const pivaIncome = sum(cashIncomes.filter(i => i.kind === 'piva'))
   const taxable = pivaIncome * s.profile.profitability / 100
@@ -593,7 +718,7 @@ export function totals(s: BudgetState, y: number) {
   const totalExpense = sum(expenses)
   const cashExpense = expenses.reduce((n, expense) => n + Math.max(0, expense.amount - (expense.benefitAmount ?? 0)), 0)
   const liquidity = s.accounts.reduce((n, a) => n + a.balance, 0)
-  const assets = s.assets.reduce((n, a) => n + a.value, 0)
+  const assets = s.assets.filter(asset => !isProtectionInsurance(asset)).reduce((n, asset) => n + assetFinancialStatus(asset).value, 0)
   // Nel patrimonio netto entra soltanto il capitale residuo dichiarato.
   // Il totale delle rate future contiene anche interessi e costi e non è una passività contabile confrontabile con gli attivi.
   const financingDebt = s.financings
@@ -601,7 +726,7 @@ export function totals(s: BudgetState, y: number) {
     .reduce((n, financing) => n + Math.max(0, financing.residualAmount), 0)
   const financingDebtUnknown = s.financings.filter(financing => financing.residualAmount > 0 && financing.residualMode !== 'principal').length
   const monthlyFinancing = s.financings.filter(financing => financing.residualAmount > 0).reduce((n, financing) => n + toMensile(financing.paymentAmount, financing.freq), 0)
-  const mensileSpese = s.expenses.filter(e => (e.recurring || e.subscription) && (!e.subscription || isActiveAt(e.subscription.startDate, e.subscription.endDate, today)) && !['finanziario','assicurativo','risparmio'].includes(e.category))
+  const mensileSpese = s.expenses.filter(e => e.expenseClass !== 'investment_transfer' && (e.recurring || e.subscription) && (!e.subscription || isActiveAt(e.subscription.startDate, e.subscription.endDate, today)))
     .reduce((n, e) => n + toMensile(Math.max(0, e.amount - (e.benefitAmount ?? 0)), e.freq), 0)
   const totalMonthlyExpenses = mensileSpese + monthlyFinancing
   // Limite attivo: il più restrittivo tra fisso e percentuale
@@ -625,22 +750,20 @@ export function monthlyData(s: BudgetState, y: number) {
     const monthEnd=isoDate(new Date(y,index+1,0,12))
     const recurringIncome=s.incomes.filter(item=>item.incomeClass!=='benefit'&&item.recurring&&item.date<=monthEnd).reduce((total,item)=>total+toMensile(item.amount,item.freq??'mensile'),0)
     const oneOffIncome=s.incomes.filter(item=>item.incomeClass!=='benefit'&&!item.recurring&&item.date.startsWith(monthKey)).reduce((total,item)=>total+item.amount,0)
-    const recurringExpenses=s.expenses.filter(item=>(item.recurring||item.subscription)&&isActiveAt(item.subscription?.startDate??item.date,item.subscription?.endDate,monthEnd)).reduce((total,item)=>total+toMensile(item.amount,item.freq),0)
-    const oneOffExpenses=s.expenses.filter(item=>!item.recurring&&!item.subscription&&item.date.startsWith(monthKey)).reduce((total,item)=>total+item.amount,0)
+    const recurringExpenses=s.expenses.filter(item=>item.expenseClass!=='investment_transfer'&&(item.recurring||item.subscription)&&isActiveAt(item.subscription?.startDate??item.date,item.subscription?.endDate,monthEnd)).reduce((total,item)=>total+toMensile(item.amount,item.freq),0)
+    const oneOffExpenses=s.expenses.filter(item=>item.expenseClass!=='investment_transfer'&&!item.recurring&&!item.subscription&&item.date.startsWith(monthKey)).reduce((total,item)=>total+item.amount,0)
     return {month,entrate:recurringIncome+oneOffIncome,spese:recurringExpenses+oneOffExpenses}
   })
 }
 
 export function patrimoniTotals(assets: Asset[]) {
-  let totVersato = 0, totValore = 0
+  let totVersato = 0, totValore = 0, rend = 0
   assets.forEach(a => {
-    const movs = a.movimenti ?? []
-    const versatoRegistrato = movs.filter(m => m.tipo==='versamento').reduce((n,m)=>n+m.importo,0)
-    const prelevato = movs.filter(m => m.tipo==='prelievo').reduce((n,m)=>n+m.importo,0)
-    const versato = a.autoTrackPayments ? Math.max(versatoRegistrato,assetPlanStatus(a).estimatedPaid) : versatoRegistrato
-    const ult = [...movs].filter(m=>m.tipo==='aggiornamento_valore').sort((x,y)=>y.data.localeCompare(x.data))[0]
-    totVersato += versato - prelevato
-    totValore += ult ? ult.importo : (a.value)
+    if (isProtectionInsurance(a)) return
+    const status = assetFinancialStatus(a)
+    totVersato += status.netPaid
+    totValore += status.value
+    if (status.netPaid > 0) rend += status.returnAmount
   })
-  return { totVersato, totValore, rend: totValore - totVersato }
+  return { totVersato: roundCurrency(totVersato), totValore: roundCurrency(totValore), rend: roundCurrency(rend) }
 }
