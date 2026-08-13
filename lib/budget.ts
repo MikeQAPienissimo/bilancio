@@ -306,7 +306,7 @@ export const FREQ_LABEL: Record<Freq, string> = {
   trimestrale: 'Trimestrale', semestrale: 'Semestrale', annuale: 'Annuale', unica: 'Una tantum'
 }
 export const FREQ_MULT: Record<Freq, number> = {
-  settimanale: 52/12, mensile: 1, bimestrale: 1/2,
+  settimanale: 4, mensile: 1, bimestrale: 1/2,
   trimestrale: 1/3, semestrale: 1/6, annuale: 1/12, unica: 0
 }
 export function toMensile(amount: number, freq: Freq = 'mensile') {
@@ -315,6 +315,7 @@ export function toMensile(amount: number, freq: Freq = 'mensile') {
 
 export function installmentsPerYear(freq: Freq) {
   if (freq === 'unica') return 1
+  if (freq === 'settimanale') return 52
   return FREQ_MULT[freq] * 12
 }
 
@@ -595,6 +596,9 @@ export function assetLinkedExpenses(asset: Asset) {
 }
 
 export function reimbursementStatus(expense: Expense) {
+  if (!expense.reimbursement) {
+    return { received: 0, outstanding: 0, state: 'settled' as const }
+  }
   const received = roundCurrency((expense.reimbursement?.payments ?? []).reduce((total, payment) => total + payment.amount, 0))
   const outstanding = roundCurrency(Math.max(0, expense.amount - received))
   return {
