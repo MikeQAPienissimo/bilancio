@@ -5,12 +5,24 @@ export type AccountType = 'conto' | 'carta' | 'fido' | 'contanti' | 'piva'
 export type Income = {
   id: string; date: string; description: string; amount: number
   kind: Kind; accountId?: string; recurring?: boolean; freq?: Freq
-  incomeClass?: 'cash' | 'benefit'
+  incomeClass?: 'cash' | 'benefit' | 'reimbursement'
   benefitId?: string
   benefitTransactionId?: string
   publicBenefitId?: string
   publicBenefitPaymentId?: string
   invoiceId?: string
+  reimbursementExpenseId?: string
+  reimbursementPaymentId?: string
+}
+export type ReimbursementMethod = 'transfer' | 'cash' | 'payroll' | 'other'
+export type ReimbursementPayment = {
+  id: string
+  date: string
+  amount: number
+  method: ReimbursementMethod
+  accountId?: string
+  incomeId: string
+  note?: string
 }
 export type Expense = Income & {
   category: string
@@ -23,6 +35,12 @@ export type Expense = Income & {
   subscription?: {
     startDate?: string
     endDate?: string | null
+  }
+  reimbursement?: {
+    debtor: string
+    reason: 'work' | 'personal'
+    expectedDate?: string
+    payments: ReimbursementPayment[]
   }
 }
 export type CashWithdrawal = {
@@ -81,6 +99,21 @@ export type FinancingPayment = {
   principalAmount: number
   expenseId: string
 }
+export type FinancingPayoff = {
+  id: string
+  date: string
+  type: 'partial' | 'full'
+  amount: number
+  residualReduction: number
+  expenseId: string
+  accountId?: string
+  note?: string
+  previousResidualAmount: number
+  previousRemainingInstallments: number
+  previousNextPaymentDate?: string
+  previousResidualEntryMode?: ResidualEntryMode
+  previousResidualCalculatedFromSchedule?: boolean
+}
 export type Financing = {
   id: string
   name: string
@@ -103,6 +136,7 @@ export type Financing = {
   residualCalculatedFromSchedule?: boolean
   nextPaymentDate?: string
   payments: FinancingPayment[]
+  payoffs: FinancingPayoff[]
 }
 export type SimulationType = 'mutuo' | 'finanziamento' | 'spesa' | 'entrata'
 export type Simulation = {
@@ -560,6 +594,16 @@ export function assetLinkedExpenses(asset: Asset) {
     .filter((expense): expense is Expense => Boolean(expense))
 }
 
+export function reimbursementStatus(expense: Expense) {
+  const received = roundCurrency((expense.reimbursement?.payments ?? []).reduce((total, payment) => total + payment.amount, 0))
+  const outstanding = roundCurrency(Math.max(0, expense.amount - received))
+  return {
+    received,
+    outstanding,
+    state: outstanding <= 0 ? 'settled' as const : received > 0 ? 'partial' as const : 'open' as const
+  }
+}
+
 export function isActiveAt(startDate: string | undefined, endDate: string | null | undefined, atDate: string) {
   if (startDate && startDate > atDate) return false
   if (endDate && endDate < atDate) return false
@@ -568,7 +612,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 16,
+    version: 17,
     profile: {
       name: '',
       ateco: '',
@@ -624,12 +668,13 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
     ...expense,
     freq: expense.freq ?? 'mensile',
     expenseClass: expense.expenseClass ?? 'consumption',
+    reimbursement: expense.reimbursement ? { ...expense.reimbursement, payments: expense.reimbursement.payments ?? [] } : undefined,
     subscription: expense.subscription ?? (expense.recurring ? { startDate: expense.date, endDate: null } : undefined)
   }))
   const linkedAssetExpenses = assets.flatMap(assetLinkedExpenses)
   const expenses = [...migratedExpenses.filter(expense => !expense.assetId), ...linkedAssetExpenses]
   return {
-    ...empty, ...v, version: 16,
+    ...empty, ...v, version: 17,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -665,7 +710,8 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         remainingInstallments,
         residualCalculatedFromSchedule: oldAutomaticResidual || financing.residualCalculatedFromSchedule,
         nextPaymentDate: oldAutomaticResidual ? scheduleStatus.nextDate : financing.nextPaymentDate ?? nextInstallmentDate(startDate, financing.freq),
-        payments
+        payments,
+        payoffs: financing.payoffs ?? []
       }
       return { ...migrated, endDate: installmentEndDate(startDate, financing.freq, installmentCount) || migrated.endDate }
     }),
@@ -705,20 +751,23 @@ export function totals(s: BudgetState, y: number) {
   const today = isoDate(new Date())
   const incomes = s.incomes.filter(i => new Date(i.date).getFullYear() === y)
   const cashIncomes = incomes.filter(i => i.incomeClass !== 'benefit')
+  const earnedIncomes = cashIncomes.filter(i => i.incomeClass !== 'reimbursement')
   const expenses = s.expenses.filter(i => new Date(i.date).getFullYear() === y && i.expenseClass !== 'investment_transfer')
   const sum = (a: { amount: number }[]) => a.reduce((n, x) => n + x.amount, 0)
-  const pivaIncome = sum(cashIncomes.filter(i => i.kind === 'piva'))
+  const pivaIncome = sum(earnedIncomes.filter(i => i.kind === 'piva'))
   const taxable = pivaIncome * s.profile.profitability / 100
   const contributions = taxable * s.profile.contributions / 100
   const tax = Math.max(0, taxable - contributions) * s.profile.substituteTax / 100
   const reserve = pivaIncome * s.profile.taxReserve / 100
-  const totalIncome = sum(cashIncomes)
+  const totalIncome = sum(earnedIncomes)
+  const reimbursementIncome = sum(incomes.filter(i => i.incomeClass === 'reimbursement'))
   const benefitIncome = sum(incomes.filter(i => i.incomeClass === 'benefit'))
-  const personalIncome = sum(cashIncomes.filter(i => i.kind === 'personale'))
+  const personalIncome = sum(earnedIncomes.filter(i => i.kind === 'personale'))
   const totalExpense = sum(expenses)
   const cashExpense = expenses.reduce((n, expense) => n + Math.max(0, expense.amount - (expense.benefitAmount ?? 0)), 0)
   const liquidity = s.accounts.reduce((n, a) => n + a.balance, 0)
   const assets = s.assets.filter(asset => !isProtectionInsurance(asset)).reduce((n, asset) => n + assetFinancialStatus(asset).value, 0)
+  const receivables = roundCurrency(s.expenses.reduce((total, expense) => total + reimbursementStatus(expense).outstanding, 0))
   // Nel patrimonio netto entra soltanto il capitale residuo dichiarato.
   // Il totale delle rate future contiene anche interessi e costi e non è una passività contabile confrontabile con gli attivi.
   const financingDebt = s.financings
@@ -736,8 +785,8 @@ export function totals(s: BudgetState, y: number) {
   const usatoLimite = (limiteAttivo < Infinity && limiteAttivo > 0) ? totalMonthlyExpenses / limiteAttivo : 0
   return {
     incomes, expenses, pivaIncome, personalIncome, taxable, contributions, tax, reserve,
-    totalIncome, benefitIncome, totalExpense, cashExpense, liquidity, assets, financingDebt, financingDebtUnknown, monthlyFinancing,
-    netWorth: liquidity + assets - financingDebt,
+    totalIncome, reimbursementIncome, benefitIncome, totalExpense, cashExpense, liquidity, assets, receivables, financingDebt, financingDebtUnknown, monthlyFinancing,
+    netWorth: liquidity + assets + receivables - financingDebt,
     mensileSpese: totalMonthlyExpenses,
     limiteAttivo: isFinite(limiteAttivo) ? limiteAttivo : Infinity,
     usatoLimite: isNaN(usatoLimite) ? 0 : usatoLimite
