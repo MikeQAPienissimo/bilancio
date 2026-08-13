@@ -8,16 +8,28 @@ export type Income = {
   incomeClass?: 'cash' | 'benefit'
   benefitId?: string
   benefitTransactionId?: string
+  publicBenefitId?: string
+  publicBenefitPaymentId?: string
   invoiceId?: string
 }
 export type Expense = Income & {
   category: string
   freq: Freq
   benefitAmount?: number
+  cashWithdrawalId?: string
+  publicBenefitSourcePaymentId?: string
   subscription?: {
     startDate?: string
     endDate?: string | null
   }
+}
+export type CashWithdrawal = {
+  id: string
+  date: string
+  amount: number
+  accountId?: string
+  publicBenefitPaymentId?: string
+  note?: string
 }
 export type Account = {
   id: string; name: string; type: AccountType; balance: number; limit: number
@@ -153,6 +165,38 @@ export type BenefitWallet = {
   creditDay?: number
   transactions: BenefitTransaction[]
 }
+export type PublicBenefitAuthority = 'INPS' | 'INAIL'
+export type PublicBenefitCategory = 'disoccupazione' | 'famiglia' | 'genitorialita' | 'inclusione' | 'disabilita' | 'malattia' | 'infortunio' | 'superstiti' | 'lavoro' | 'altro'
+export type PublicBenefitStatus = 'valutazione' | 'domanda' | 'approvata' | 'sospesa' | 'terminata' | 'respinta'
+export type PublicBenefitAmountMode = 'fixed' | 'variable'
+export type PublicBenefitPayment = {
+  id: string
+  date: string
+  amount: number
+  accountId?: string
+  incomeId: string
+  note?: string
+}
+export type PublicBenefit = {
+  id: string
+  catalogKey: string
+  name: string
+  authority: PublicBenefitAuthority
+  category: PublicBenefitCategory
+  status: PublicBenefitStatus
+  amount: number
+  amountMode: PublicBenefitAmountMode
+  frequency: Freq
+  applicationDate?: string
+  startDate?: string
+  endDate?: string
+  nextPaymentDate?: string
+  beneficiary?: string
+  protocolNumber?: string
+  officialUrl?: string
+  notes?: string
+  payments: PublicBenefitPayment[]
+}
 export type DashboardPreferences = {
   forecast: boolean
   alerts: boolean
@@ -183,6 +227,8 @@ export type BudgetState = {
   goals: SavingsGoal[]
   invoices: Invoice[]
   benefits: BenefitWallet[]
+  publicBenefits: PublicBenefit[]
+  cashWithdrawals: CashWithdrawal[]
   dashboard: DashboardPreferences
   preferences: AppPreferences
   limiteSpesa: LimiteSpesa
@@ -401,7 +447,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 12,
+    version: 14,
     profile: {
       name: '',
       ateco: '',
@@ -420,6 +466,8 @@ export function createEmptyState(): BudgetState {
     goals: [],
     invoices: [],
     benefits: [],
+    publicBenefits: [],
+    cashWithdrawals: [],
     dashboard: { forecast: true, alerts: true, goals: true, subscriptions: true, charts: true },
     preferences: { onboardingCompleted: false, modules: { ...EMPTY_MODULES } },
     incomes: [],
@@ -441,7 +489,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
       }
     : { onboardingCompleted: true, modules: { ...ALL_MODULES } }
   return {
-    ...empty, ...v, version: 12,
+    ...empty, ...v, version: 14,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -481,6 +529,15 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
     goals: v.goals ?? [],
     invoices: v.invoices ?? [],
     benefits: (v.benefits ?? []).map(benefit => ({ ...benefit, accreditMode: benefit.accreditMode ?? 'none', transactions: benefit.transactions ?? [] })),
+    publicBenefits: (v.publicBenefits ?? []).map(benefit => ({
+      ...benefit,
+      status: benefit.status ?? 'valutazione',
+      amount: benefit.amount ?? 0,
+      amountMode: benefit.amountMode ?? 'variable',
+      frequency: benefit.frequency ?? 'mensile',
+      payments: benefit.payments ?? []
+    })),
+    cashWithdrawals: v.cashWithdrawals ?? [],
     dashboard: { ...empty.dashboard, ...v.dashboard },
     preferences,
     simulations: (v.simulations ?? []).map(simulation => {
