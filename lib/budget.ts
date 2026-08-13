@@ -63,6 +63,7 @@ export type Deadline = {
 export type FinancingCategory = 'mutuo' | 'auto' | 'prestito' | 'leasing' | 'altro'
 export type InterestMode = 'percentage' | 'total' | 'payment'
 export type ResidualMode = 'total_due' | 'principal'
+export type ResidualEntryMode = 'automatic' | 'total_due' | 'principal'
 export type FinancingPayment = {
   id: string
   dueDate: string
@@ -88,6 +89,7 @@ export type Financing = {
   endDate: string
   accountId?: string
   residualMode: ResidualMode
+  residualEntryMode?: ResidualEntryMode
   remainingInstallments: number
   residualCalculatedFromSchedule?: boolean
   nextPaymentDate?: string
@@ -282,9 +284,10 @@ export function installmentAmount(
   freq: Freq,
   knownPayment = 0
 ) {
-  if (principal <= 0 || installmentCount <= 0) return 0
+  if (installmentCount <= 0) return 0
   if (interestMode === 'payment') return Math.max(0, knownPayment)
   if (interestMode === 'total') return Math.max(0, totalRepayable) / installmentCount
+  if (principal <= 0) return 0
   const periodicRate = annualRate / 100 / installmentsPerYear(freq)
   if (periodicRate <= 0) return principal / installmentCount
   return principal * periodicRate / (1 - Math.pow(1 + periodicRate, -installmentCount))
@@ -371,12 +374,20 @@ export function residualInstallmentSchedule(
 }
 
 export function financingRemainingInstallments(financing: Financing) {
+  if (financing.residualEntryMode === 'automatic' || financing.residualCalculatedFromSchedule) {
+    return installmentProgress(financing.startDate, financing.freq, financing.installmentCount).remaining
+  }
   if (financing.residualAmount <= 0 || financing.paymentAmount <= 0) return 0
   if (Number.isFinite(financing.remainingInstallments)) return Math.max(0, Math.floor(financing.remainingInstallments))
   return remainingInstallmentCount(financing.residualAmount, financing.paymentAmount)
 }
 
 export function financingInstallmentSchedule(financing: Financing, asOfDate = isoDate(new Date())) {
+  if (financing.residualEntryMode === 'automatic' || financing.residualCalculatedFromSchedule) {
+    return installmentSchedule(financing.startDate, financing.freq, financing.installmentCount)
+      .filter(installment => installment.date >= asOfDate)
+      .map(installment => ({ ...installment, amount: financing.paymentAmount }))
+  }
   const installmentCount = financingRemainingInstallments(financing)
   const nextDate = financing.nextPaymentDate && financing.nextPaymentDate >= asOfDate
     ? financing.nextPaymentDate
@@ -410,7 +421,7 @@ export function installmentProgress(startDate: string, freq: Freq, installmentCo
   let paid = 0
   let nextDate = ''
   for (const installment of schedule) {
-    if (installment.date <= asOfDate) paid += 1
+    if (installment.date < asOfDate) paid += 1
     else if (!nextDate) nextDate = installment.date
   }
   return { paid, remaining: Math.max(0, installmentCount - paid), nextDate, endDate }
@@ -447,7 +458,7 @@ export function isActiveAt(startDate: string | undefined, endDate: string | null
 
 export function createEmptyState(): BudgetState {
   return {
-    version: 14,
+    version: 15,
     profile: {
       name: '',
       ateco: '',
@@ -489,7 +500,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
       }
     : { onboardingCompleted: true, modules: { ...ALL_MODULES } }
   return {
-    ...empty, ...v, version: 14,
+    ...empty, ...v, version: 15,
     profile: { ...empty.profile, ...v.profile },
     limiteSpesa: v.limiteSpesa ?? empty.limiteSpesa,
     accounts: v.accounts ?? [],
@@ -506,6 +517,8 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         && financing.interestMode === 'payment'
         && payments.length === 0
         && Math.abs(financing.residualAmount - financing.originalAmount) < 0.005
+      const residualEntryMode = financing.residualEntryMode
+        ?? (residualMode === 'principal' ? 'principal' : financing.residualCalculatedFromSchedule || oldAutomaticResidual ? 'automatic' : 'total_due')
       const scheduleStatus = financingStatusFromSchedule(startDate, financing.freq, installmentCount, financing.paymentAmount)
       const remainingInstallments = oldAutomaticResidual
         ? scheduleStatus.remaining
@@ -519,6 +532,7 @@ export function migrate(v: Partial<BudgetState>): BudgetState {
         startDate,
         endDate: financing.endDate ?? installmentEndDate(startDate, financing.freq, installmentCount),
         residualMode,
+        residualEntryMode,
         remainingInstallments,
         residualCalculatedFromSchedule: oldAutomaticResidual || financing.residualCalculatedFromSchedule,
         nextPaymentDate: oldAutomaticResidual ? scheduleStatus.nextDate : financing.nextPaymentDate ?? nextInstallmentDate(startDate, financing.freq),
@@ -580,7 +594,12 @@ export function totals(s: BudgetState, y: number) {
   const cashExpense = expenses.reduce((n, expense) => n + Math.max(0, expense.amount - (expense.benefitAmount ?? 0)), 0)
   const liquidity = s.accounts.reduce((n, a) => n + a.balance, 0)
   const assets = s.assets.reduce((n, a) => n + a.value, 0)
-  const financingDebt = s.financings.reduce((n, financing) => n + Math.max(0, financing.residualAmount), 0)
+  // Nel patrimonio netto entra soltanto il capitale residuo dichiarato.
+  // Il totale delle rate future contiene anche interessi e costi e non è una passività contabile confrontabile con gli attivi.
+  const financingDebt = s.financings
+    .filter(financing => financing.residualMode === 'principal')
+    .reduce((n, financing) => n + Math.max(0, financing.residualAmount), 0)
+  const financingDebtUnknown = s.financings.filter(financing => financing.residualAmount > 0 && financing.residualMode !== 'principal').length
   const monthlyFinancing = s.financings.filter(financing => financing.residualAmount > 0).reduce((n, financing) => n + toMensile(financing.paymentAmount, financing.freq), 0)
   const mensileSpese = s.expenses.filter(e => (e.recurring || e.subscription) && (!e.subscription || isActiveAt(e.subscription.startDate, e.subscription.endDate, today)) && !['finanziario','assicurativo','risparmio'].includes(e.category))
     .reduce((n, e) => n + toMensile(Math.max(0, e.amount - (e.benefitAmount ?? 0)), e.freq), 0)
@@ -592,7 +611,7 @@ export function totals(s: BudgetState, y: number) {
   const usatoLimite = (limiteAttivo < Infinity && limiteAttivo > 0) ? totalMonthlyExpenses / limiteAttivo : 0
   return {
     incomes, expenses, pivaIncome, personalIncome, taxable, contributions, tax, reserve,
-    totalIncome, benefitIncome, totalExpense, cashExpense, liquidity, assets, financingDebt, monthlyFinancing,
+    totalIncome, benefitIncome, totalExpense, cashExpense, liquidity, assets, financingDebt, financingDebtUnknown, monthlyFinancing,
     netWorth: liquidity + assets - financingDebt,
     mensileSpese: totalMonthlyExpenses,
     limiteAttivo: isFinite(limiteAttivo) ? limiteAttivo : Infinity,
